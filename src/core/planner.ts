@@ -1,4 +1,4 @@
-import type { DocumentMetadata, SyncOperation, SyncPlan } from "./types";
+import { type DocumentMetadata, getDocumentId, type SyncOperation, type SyncPlan } from "./types";
 
 export class Planner {
   plan(sourceMetadata: DocumentMetadata[], targetMetadata: DocumentMetadata[]): SyncPlan {
@@ -7,12 +7,12 @@ export class Planner {
 
     // Build a map of target documents by ID
     for (const target of targetMetadata) {
-      targetMap.set(target.id, target);
+      targetMap.set(getDocumentId(target), target);
     }
 
     // Check for creates and updates
     for (const source of sourceMetadata) {
-      const target = targetMap.get(source.id);
+      const target = targetMap.get(getDocumentId(source));
 
       if (!target) {
         // Document doesn't exist in target - create
@@ -38,7 +38,7 @@ export class Planner {
       }
 
       // Mark as processed
-      targetMap.delete(source.id);
+      targetMap.delete(getDocumentId(source));
     }
 
     // Check for deletes - remaining items in targetMap

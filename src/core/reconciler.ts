@@ -2,7 +2,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Logger, NullLogger } from "./logger";
-import type { DataSourceProvider, KnowledgeProvider, SyncPlan } from "./types";
+import {
+  type DataSourceProvider,
+  getDocumentId,
+  type KnowledgeProvider,
+  type SyncPlan,
+} from "./types";
 
 export interface ReconcilerOptions {
   dryRun?: boolean;
@@ -36,7 +41,7 @@ export class Reconciler {
         const { type, documentMetadata, reason } = operation;
 
         this.logger.info(`Processing operation: ${type}`, {
-          documentId: documentMetadata.id,
+          documentId: getDocumentId(documentMetadata),
           title: documentMetadata.title,
           reason,
         });
@@ -55,10 +60,12 @@ export class Reconciler {
               throw new Error(`Source provider not found: ${documentMetadata.providerId}`);
             }
 
-            const content = await sourceProvider.downloadDocumentContent(documentMetadata.id);
+            const content = await sourceProvider.downloadDocumentContent(
+              getDocumentId(documentMetadata),
+            );
             const tempFilePath = join(
               tempDir,
-              `${documentMetadata.id.replace(/[^a-zA-Z0-9]/g, "_")}.md`,
+              `${getDocumentId(documentMetadata).replace(/[^a-zA-Z0-9]/g, "_")}.md`,
             );
             await writeFile(tempFilePath, content, "utf-8");
 
@@ -76,7 +83,7 @@ export class Reconciler {
           case "delete": {
             // Delete from target
             for (const targetProvider of this.targetProviders) {
-              await targetProvider.deleteDocument(documentMetadata.id);
+              await targetProvider.deleteDocument(getDocumentId(documentMetadata));
             }
             break;
           }

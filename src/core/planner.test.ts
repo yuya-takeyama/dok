@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { Planner } from "./planner";
-import type { DocumentMetadata } from "./types";
+import { type DocumentMetadata, getDocumentId } from "./types";
 
 describe("Planner", () => {
   const planner = new Planner();
 
-  const createMetadata = (id: string, title: string, lastModified: Date): DocumentMetadata => ({
-    id,
-    sourceId: id.split(":")[1],
-    providerId: id.split(":")[0],
-    title,
-    lastModified,
-  });
+  const createMetadata = (id: string, title: string, lastModified: Date): DocumentMetadata => {
+    const [providerId, sourceId] = id.split(":");
+    return {
+      providerId,
+      sourceId,
+      title,
+      lastModified,
+    };
+  };
 
   it("should create operations for new documents", () => {
     const sourceMetadata: DocumentMetadata[] = [
@@ -123,16 +125,16 @@ describe("Planner", () => {
     const skipOps = plan.operations.filter((op) => op.type === "skip");
 
     expect(createOps).toHaveLength(1);
-    expect(createOps[0].documentMetadata.id).toBe("notion:doc3");
+    expect(getDocumentId(createOps[0].documentMetadata)).toBe("notion:doc3");
 
     expect(updateOps).toHaveLength(1);
-    expect(updateOps[0].documentMetadata.id).toBe("notion:doc1");
+    expect(getDocumentId(updateOps[0].documentMetadata)).toBe("notion:doc1");
 
     expect(skipOps).toHaveLength(1);
-    expect(skipOps[0].documentMetadata.id).toBe("notion:doc2");
+    expect(getDocumentId(skipOps[0].documentMetadata)).toBe("notion:doc2");
 
     expect(deleteOps).toHaveLength(1);
-    expect(deleteOps[0].documentMetadata.id).toBe("notion:doc4");
+    expect(getDocumentId(deleteOps[0].documentMetadata)).toBe("notion:doc4");
 
     expect(plan.summary).toEqual({
       total: 4,

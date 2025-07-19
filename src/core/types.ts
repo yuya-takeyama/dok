@@ -2,14 +2,26 @@ import { z } from "zod";
 
 // Document metadata schema
 export const DocumentMetadataSchema = z.object({
-  id: z.string().describe("format: <provider-id>:<original-id>"),
-  sourceId: z.string(),
   providerId: z.string(),
+  sourceId: z.string(),
   title: z.string(),
   lastModified: z.date(),
 });
 
 export type DocumentMetadata = z.infer<typeof DocumentMetadataSchema>;
+
+// Helper functions for document ID
+export function getDocumentId(metadata: DocumentMetadata): string {
+  return `${metadata.providerId}:${metadata.sourceId}`;
+}
+
+export function parseDocumentId(id: string): { providerId: string; sourceId: string } {
+  const [providerId, ...sourceIdParts] = id.split(":");
+  return {
+    providerId,
+    sourceId: sourceIdParts.join(":"), // Handle sourceIds that contain ':'
+  };
+}
 
 // Sync operation types
 export const SyncOperationTypeSchema = z.enum(["create", "update", "delete", "skip"]);
