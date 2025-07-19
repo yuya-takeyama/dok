@@ -31,44 +31,36 @@
 ```mermaid
 flowchart TB
     subgraph DS[Data Sources]
-        Notion[Notion]
-        Future1["Future: Google Drive/GitHub/S3"]
+        Notion["Notion<br/>ID: notion:page_id"]
+        Future1["Future:<br/>Google Drive / GitHub"]
     end
 
-    subgraph ETL[ETL Engine]
-        direction TB
-        Fetcher["1: Fetcher<br/>現在の状態取得"]
-        Planner["2: Planner<br/>差分計算 - 純粋関数"]
-        SyncPlan["SyncPlan<br/>・create<br/>・update<br/>・delete<br/>・skip"]
-        Reconciler["3: Reconciler<br/>計画実行"]
-        Reporter["4: Reporter<br/>結果レポート"]
+    subgraph Core[Sync Engine]
+        Fetcher["Fetcher<br/>メタデータ取得"]
+        Planner["Planner<br/>差分計算（純粋関数）"]
+        Reconciler["Reconciler<br/>同期実行"]
 
-        Fetcher -->|"Metadata only<br/>(ID, lastModified)"| Planner
-        Planner -.->|"generates"| SyncPlan
-        SyncPlan -.->|"consumed by"| Reconciler
-        Reconciler -->|"Results"| Reporter
+        Fetcher -->|"metadata[]"| Planner
+        Planner -->|"sync plan"| Reconciler
     end
 
-    subgraph KP[Knowledge Providers]
-        Dify[Dify]
-        Future2["Future: Bedrock/S3 Vector"]
+    subgraph KB[Knowledge Bases]
+        Dify["Dify<br/>Dataset API"]
+        Future2["Future:<br/>Other KBs"]
     end
 
     DS -->|"fetch metadata"| Fetcher
-    Fetcher <-->|"fetch metadata"| KP
-    DS -->|"download to tempfile"| Reconciler
-    Reconciler -->|"upload from tempfile"| KP
+    KB -->|"fetch metadata"| Fetcher
+    DS -->|"download content"| Reconciler
+    Reconciler -->|"upload content"| KB
 
-    classDef dataSource fill:#4fc3f7,stroke:#0277bd,stroke-width:3px,color:#000
-    classDef etlComponent fill:#ba68c8,stroke:#6a1b9a,stroke-width:3px,color:#fff
-    classDef knowledge fill:#81c784,stroke:#388e3c,stroke-width:3px,color:#000
-    classDef state fill:#ffb74d,stroke:#f57c00,stroke-width:3px,color:#000
-    classDef data fill:#ffe0b2,stroke:#ff6f00,stroke-width:2px,stroke-dasharray: 5 5,color:#000
+    classDef dataSource fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef core fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef knowledge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
 
     class Notion,Future1 dataSource
-    class Fetcher,Planner,Reconciler,Reporter etlComponent
+    class Fetcher,Planner,Reconciler core
     class Dify,Future2 knowledge
-    class SyncPlan data
 ```
 
 ### 2.2 コンポーネント設計
@@ -184,17 +176,37 @@ dok/
 ### 5.1 Core Types
 
 ```typescript
+// Provider共通インターフェース
+interface DataSourceProvider {
+  providerId: string;
+  initialize(config: Record<string, any>): Promise<void>;
+  fetchDocumentsMetadata():
+    | AsyncIterator<DocumentMetadata>
+    | Promise<DocumentMetadata[]>;
+  downloadDocumentContent(documentId: string): Promise<string>; // 一時ファイルパスを返す
+}
+
+interface KnowledgeProvider {
+  initialize(config: Record<string, any>): Promise<void>;
+  fetchDocumentsMetadata(): Promise<DocumentMetadata[]>;
+  createDocumentFromFile(
+    metadata: DocumentMetadata,
+    filePath: string,
+  ): Promise<void>;
+  updateDocumentFromFile(
+    metadata: DocumentMetadata,
+    filePath: string,
+  ): Promise<void>;
+  deleteDocument(documentId: string): Promise<void>;
+}
+
 // DocumentMetadata型定義（これのみを使用、contentは扱わない）
 interface DocumentMetadata {
   id: string; // 一意識別子（format: <provider-id>:<original-id>）
   sourceId: string; // ソース側の元ID（プロバイダー固有のID）
   providerId: string; // Data Source Provider ID（例: 'notion', 'google-drive'）
   title: string;
-  lastModified: Date; // 更新判定に使用
-  metadata: {
-    contentHash?: string; // コンテンツのハッシュ値（オプション）
-    customFields?: Record<string, any>;
-  };
+  lastModified: Date; // 更新判定に使用（これが同期の要）
 }
 
 // 一時ファイル処理用の型
@@ -262,7 +274,8 @@ interface KnowledgeConfig {
 ### 6.1 Notion Provider
 
 ```typescript
-export class NotionProvider {
+export class NotionProvider implements DataSourceProvider {
+  providerId = "notion";
   private client: Client;
   private databaseId: string;
 
@@ -284,9 +297,6 @@ export class NotionProvider {
         providerId: "notion", // Data Source Provider ID
         title: this.extractTitle(page),
         lastModified: new Date(page.last_edited_time),
-        metadata: {
-          customFields: page.properties,
-        },
       };
     }
   }
@@ -311,7 +321,7 @@ export class NotionProvider {
 ### 6.2 Dify Provider
 
 ```typescript
-export class DifyProvider {
+export class DifyProvider implements KnowledgeProvider {
   private apiKey: string;
   private baseUrl: string;
   private datasetId: string;
@@ -337,7 +347,6 @@ export class DifyProvider {
       providerId: this.extractProviderId(doc.name), // IDから抽出
       title: doc.title,
       lastModified: new Date(doc.updated_at),
-      metadata: doc.metadata || {},
     }));
   }
 
@@ -585,17 +594,8 @@ class ETLEngine {
 
 ## 7. エラーハンドリング
 
-### 7.1 エラー戦略
-
-- **Transient Errors**: 自動リトライ（最大3回）
-- **Permanent Errors**: ログ記録して継続
-- **Fatal Errors**: 処理中断
-
-### 7.2 ログ設計
-
-- 構造化ログ（JSON形式）
-- ログレベル: debug, info, warn, error
-- 進捗状況の定期的な出力
+- **基本方針**: Plan/Applyベースの冪等な実行により、エラーからの復旧を保証
+- **詳細な実装**: 必要に応じて後から追加
 
 ## 8. 依存パッケージ
 
@@ -663,6 +663,12 @@ options:
     maxDelay: 10000 # ms
 ```
 
+### 9.2 実行モード
+
+- **ローカル実行**: `dok run --config config.yaml`
+- **GitHub Actions**: ワークフロー内でCLIを実行
+- **環境変数**: APIキーなどの機密情報は環境変数で管理
+
 ## 10. テスト戦略
 
 ### 10.1 純粋関数のユニットテスト
@@ -703,18 +709,16 @@ describe("generateSyncPlan", () => {
 
 ## 11. 将来の拡張ポイント
 
-1. **Transform Layer**
-   - ドキュメント変換機能
+1. **新しいData Source Provider**
+   - Google Drive
+   - GitHub
+   - S3
+
+2. **新しいKnowledge Provider**
+   - AWS Bedrock Knowledge Base
+   - Pinecone
+   - Weaviate
+
+3. **変換機能**
+   - HTML/PDF → Markdown変換
    - メタデータエンリッチメント
-
-2. **Parallel Processing**
-   - 並列実行によるパフォーマンス向上
-   - Worker Pool実装
-
-3. **Incremental Sync**
-   - 差分同期の実装
-   - 状態管理（最終同期時刻など）
-
-4. **Monitoring**
-   - メトリクス収集
-   - 外部監視システムとの連携
