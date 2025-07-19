@@ -1,6 +1,6 @@
 import { Fetcher } from "./fetcher";
 import { type Logger, NullLogger } from "./logger";
-import { Planner } from "./planner";
+import { plan } from "./planner";
 import { Reconciler, type ReconcilerOptions } from "./reconciler";
 import type { DataSourceProvider, KnowledgeProvider } from "./types";
 
@@ -10,55 +10,63 @@ export interface EngineOptions extends ReconcilerOptions {
 
 export class ETLEngine {
   private fetcher: Fetcher;
-  private planner: Planner;
-  private reconciler: Reconciler;
+  private sourceProviderMap: Map<string, DataSourceProvider>;
   private readonly logger: Logger;
   private readonly jobName?: string;
 
   constructor(
-    sourceProviders: DataSourceProvider[],
-    targetProviders: KnowledgeProvider[],
-    options: EngineOptions = {},
+    private sourceProviders: DataSourceProvider[],
+    private targetProviders: KnowledgeProvider[],
+    private options: EngineOptions = {},
   ) {
     this.logger = options.logger ?? new NullLogger();
     this.jobName = options.jobName;
-    this.fetcher = new Fetcher(sourceProviders, targetProviders);
-    this.planner = new Planner();
+    this.fetcher = new Fetcher(sourceProviders);
 
     // Create a map of source providers for reconciler
-    const sourceProviderMap = new Map<string, DataSourceProvider>();
+    this.sourceProviderMap = new Map<string, DataSourceProvider>();
     for (const provider of sourceProviders) {
-      sourceProviderMap.set(provider.providerId, provider);
+      this.sourceProviderMap.set(provider.providerId, provider);
     }
-
-    this.reconciler = new Reconciler(sourceProviderMap, targetProviders, options);
   }
 
   async run(): Promise<void> {
     this.logger.info("Starting ETL job", { jobName: this.jobName });
 
-    // Step 1: Fetch metadata from sources and targets
-    this.logger.info("Fetching metadata from sources and targets");
-    const [sourceMetadata, targetMetadata] = await Promise.all([
-      this.fetcher.fetchSourceMetadata(),
-      this.fetcher.fetchTargetMetadata(),
-    ]);
+    // Step 1: Fetch metadata from sources (desired state)
+    this.logger.info("Fetching metadata from sources");
+    const sourceMetadata = await this.fetcher.fetchSourceMetadata();
 
-    this.logger.info("Metadata fetched", {
+    this.logger.info("Source metadata fetched", {
       sourceCount: sourceMetadata.length,
-      targetCount: targetMetadata.length,
     });
 
-    // Step 2: Generate sync plan
-    this.logger.info("Generating sync plan");
-    const plan = this.planner.plan(sourceMetadata, targetMetadata);
+    // Step 2: Process each target individually
+    for (const targetProvider of this.targetProviders) {
+      this.logger.info("Processing target provider");
 
-    this.logger.info("Sync plan generated", {
-      summary: plan.summary,
-    });
+      // Fetch current state for this target
+      const targetMetadata = await this.fetcher.fetchTargetMetadata(targetProvider);
 
-    // Step 3: Execute sync plan
-    await this.reconciler.execute(plan);
+      this.logger.info("Target metadata fetched", {
+        targetCount: targetMetadata.length,
+      });
+
+      // Generate sync plan for this target
+      this.logger.info("Generating sync plan for target");
+      const syncPlan = plan(sourceMetadata, targetMetadata);
+
+      this.logger.info("Sync plan generated for target", {
+        summary: syncPlan.summary,
+      });
+
+      // Execute sync plan for this target
+      const reconciler = new Reconciler(this.sourceProviderMap, [targetProvider], {
+        logger: this.logger,
+        dryRun: this.options?.dryRun,
+      });
+      await reconciler.execute(syncPlan);
+    }
 
     this.logger.info("ETL job completed", { jobName: this.jobName });
   }
