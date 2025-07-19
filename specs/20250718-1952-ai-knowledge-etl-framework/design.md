@@ -76,20 +76,27 @@ flowchart TB
    - **文書本体は取得せず**、メタデータ（ID、最終更新日時）のみ取得
 
 3. **Planner Layer** (純粋関数層)
-   - Desired State（Sources）と各Current State（Target）を突合
-   - **メタデータのみで**Target毎の実行計画（SyncPlan）を生成
+   - Desired State（Sources）とCurrent State（Target）を突合
+   - **メタデータのみで**実行計画（SyncPlan）を生成
    - 最終更新日時の比較により操作を決定: create, update, delete, skip
-   - **各Targetは独立して処理**されるため、同じソースでもTargetによって異なるプランが生成される
+   - 純粋関数として実装され、副作用を持たない
 
 4. **Reconciler Layer** (I/O層)
    - SyncPlanに基づいて実際の操作を実行
+   - **単一のターゲットプロバイダーに対して操作を実行**（Single Responsibility Principle）
    - **create/update対象の文書のみ**、実行時に取得・処理
    - **プロバイダー固有の実装**: Notionはblocks→Markdown変換、Google Driveは直接ファイル取得など
    - エラーハンドリングとリトライ
    - 一時ファイルの自動クリーンアップ
    - 進捗状況の追跡
 
-5. **Provider実装**
+5. **Engine Layer** (実行制御層)
+   - 全体の実行フロー制御
+   - **各ターゲットに対して独立してReconcilerを実行**
+   - 複数ターゲットへの同期は、Engineレベルでループ処理
+   - ジョブ管理とドライランモード対応
+
+6. **Provider実装**
    - NotionとDifyの直接実装
    - ID管理とメタデータ追跡
 
@@ -143,9 +150,9 @@ dok/
 │   │   ├── index.ts            # 設定管理
 │   │   └── schema.ts           # 設定スキーマ定義
 │   ├── core/
-│   │   ├── engine.ts           # ETLエンジン（メイン実行フロー）
+│   │   ├── engine.ts           # 実行エンジン（メイン実行フロー）
 │   │   ├── fetcher.ts          # 状態取得ロジック
-│   │   ├── planner.ts          # 同期計画生成（純粋関数）
+│   │   ├── createSyncPlan.ts   # 同期計画生成（純粋関数）
 │   │   ├── reconciler.ts       # 計画実行ロジック
 │   │   ├── types.ts            # 共通型定義
 │   │   └── operations.ts       # 操作定義（create/update/delete/skip）
@@ -160,7 +167,7 @@ dok/
 │   │   ├── retry.ts            # リトライロジック
 │   │   └── tempfile.ts         # 一時ファイル管理
 │   └── tests/
-│       ├── planner.test.ts     # 同期計画生成のテスト
+│       ├── createSyncPlan.test.ts # 同期計画生成のテスト
 │       └── fixtures/           # テストデータ
 ├── config.yaml                 # 設定ファイル例
 ├── package.json
@@ -503,160 +510,75 @@ export function createSyncPlan(
 }
 ```
 
-### 6.4 ETL Engine
+### 6.4 Engine
 
 ```typescript
-class Engine {
-  constructor(private options?: { dryRun?: boolean }) {}
+export class Engine {
+  private fetcher: Fetcher;
+  private sourceProviderMap: Map<string, DataSourceProvider>;
+  private readonly logger: Logger;
+  private readonly jobName?: string;
 
-  async execute(config: Config, jobIds?: string[]): Promise<void> {
-    // 実行するジョブを決定
-    const jobsToRun = this.selectJobs(config.jobs, jobIds);
-
-    // 各ジョブを実行
-    for (const [jobId, jobConfig] of Object.entries(jobsToRun)) {
-      if (jobConfig.options?.enabled === false) {
-        logger.info(`Skipping disabled job: ${jobId}`);
-        continue;
-      }
-
-      logger.info(
-        `=== Executing job: ${jobId} (${jobConfig.name || jobId}) ===`,
-      );
-      await this.executeJob(jobId, jobConfig, config);
-    }
-  }
-
-  private async executeJob(
-    jobId: string,
-    jobConfig: JobConfig,
-    globalConfig: Config,
-  ): Promise<void> {
-    // 1. ソースプロバイダーの初期化と取得
-    const sourceProviders = await this.initializeSourceProviders(
-      jobConfig.sources,
-      globalConfig.providers?.sources,
-    );
-
-    // 2. ターゲットプロバイダーの初期化
-    const targetProviders = await this.initializeTargetProviders(
-      jobConfig.targets,
-      globalConfig.providers?.targets,
-    );
-
-    // 3. 全ソースからメタデータを収集
-    logger.info(`Fetching metadata from ${sourceProviders.length} sources...`);
-    const allSourceMetadata: DocumentMetadata[] = [];
-    for (const provider of sourceProviders) {
-      const metadata = await this.fetchAllMetadata(provider);
-      allSourceMetadata.push(...metadata);
-    }
-
-    // 4. 各ターゲットに対して同期を実行
-    for (const targetProvider of targetProviders) {
-      logger.info(`Syncing to target: ${targetProvider.constructor.name}`);
-
-      // ターゲットの現在の状態を取得
-      const targetMetadata = await targetProvider.fetchDocumentsMetadata();
-
-      // 同期計画を生成
-      const plan = createSyncPlan(allSourceMetadata, targetMetadata);
-      logger.info(`Sync plan for target:`, plan.summary);
-
-      // ドライランモードのチェック（CLIから渡される）
-      if (this.options?.dryRun) {
-        logger.info("Dry run mode - no changes will be made");
-        this.printPlan(plan);
-        continue;
-      }
-
-      // 計画を実行（Reconciler - 必要時のみ文書取得）
-      logger.info("Executing sync plan...");
-      const results = await this.reconcile(
-        plan,
-        sourceProviders,
-        targetProvider,
-      );
-
-      // 結果レポート
-      this.reportResults(results);
-    }
-  }
-
-  private async reconcile(
-    plan: SyncPlan,
+  constructor(
     sourceProviders: DataSourceProvider[],
-    targetProvider: KnowledgeProvider,
-  ): Promise<SyncResult[]> {
-    const results: SyncResult[] = [];
+    private readonly targetProviders: KnowledgeProvider[],
+    private readonly options: EngineOptions = {},
+  ) {
+    this.logger = options.logger ?? new NullLogger();
+    this.jobName = options.jobName;
+    this.fetcher = new Fetcher(sourceProviders);
 
-    for (const operation of plan.operations) {
-      if (operation.type === "skip") continue;
+    // Create a map of source providers for reconciler
+    this.sourceProviderMap = new Map<string, DataSourceProvider>();
+    for (const provider of sourceProviders) {
+      this.sourceProviderMap.set(provider.providerId, provider);
+    }
+  }
 
-      const startTime = Date.now();
-      let tempFilePath: string | null = null;
+  async run(): Promise<void> {
+    this.logger.info("Starting sync job", { jobName: this.jobName });
 
-      try {
-        switch (operation.type) {
-          case "create":
-          case "update":
-            // 適切なソースプロバイダーを特定
-            const sourceProvider = sourceProviders.find(
-              (p) => p.providerId === operation.documentMetadata.providerId,
-            );
-            if (!sourceProvider) {
-              throw new Error(
-                `Source provider not found: ${operation.documentMetadata.providerId}`,
-              );
-            }
+    // Step 1: Fetch metadata from sources (desired state)
+    this.logger.info("Fetching metadata from sources");
+    const sourceMetadata = await this.fetcher.fetchSourceMetadata();
 
-            // ドキュメントを取得・変換し、一時ファイルパスを取得
-            tempFilePath = await sourceProvider.downloadDocumentContent(
-              operation.documentMetadata.sourceId,
-            );
+    this.logger.info("Source metadata fetched", {
+      sourceCount: sourceMetadata.length,
+    });
 
-            if (operation.type === "create") {
-              await targetProvider.createDocumentFromFile(
-                operation.documentMetadata,
-                tempFilePath,
-              );
-            } else {
-              await targetProvider.updateDocumentFromFile(
-                operation.documentMetadata,
-                tempFilePath,
-              );
-            }
-            break;
-          case "delete":
-            await targetProvider.deleteDocument(operation.documentMetadata.id);
-            break;
-        }
+    // Step 2: Process each target individually
+    for (const targetProvider of this.targetProviders) {
+      this.logger.info("Processing target provider");
 
-        results.push({
-          operation,
-          success: true,
-          duration: Date.now() - startTime,
-        });
-      } catch (error) {
-        results.push({
-          operation,
-          success: false,
-          error: error as Error,
-          duration: Date.now() - startTime,
-        });
-      } finally {
-        // 一時ファイルのクリーンアップ
-        if (tempFilePath) {
-          try {
-            await fs.unlink(tempFilePath);
-          } catch {
-            // クリーンアップエラーは無視
-          }
-        }
-      }
+      // Fetch current state for this target
+      const targetMetadata =
+        await this.fetcher.fetchTargetMetadata(targetProvider);
+
+      this.logger.info("Target metadata fetched", {
+        targetCount: targetMetadata.length,
+      });
+
+      // Generate sync plan for this target
+      this.logger.info("Generating sync plan for target");
+      const plan = createSyncPlan(sourceMetadata, targetMetadata);
+
+      this.logger.info("Sync plan generated for target", {
+        summary: plan.summary,
+      });
+
+      // Execute sync plan for this target
+      const reconciler = new Reconciler(
+        this.sourceProviderMap,
+        targetProvider,
+        {
+          logger: this.logger,
+          dryRun: this.options?.dryRun,
+        },
+      );
+      await reconciler.execute(plan);
     }
 
-    return results;
+    this.logger.info("Sync job completed", { jobName: this.jobName });
   }
 }
 ```
@@ -854,9 +776,9 @@ jobs:
 ### 10.1 純粋関数のユニットテスト
 
 ```typescript
-// planner.test.ts
+// createSyncPlan.test.ts
 import { describe, it, expect } from "vitest";
-import { generateSyncPlan } from "../core/planner";
+import { createSyncPlan } from "../core/createSyncPlan";
 
 describe("generateSyncPlan", () => {
   it("should create new documents", () => {
