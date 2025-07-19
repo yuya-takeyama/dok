@@ -56,8 +56,8 @@ export class NotionProvider implements DataSourceProvider {
   }
 
   async downloadDocumentContent(documentId: string): Promise<string> {
-    // documentId format: "notion:page_id"
-    const pageId = documentId.replace("notion:", "");
+    // documentId format: "<providerId>:page_id"
+    const pageId = documentId.replace(`${this.providerId}:`, "");
 
     try {
       // Convert page blocks to markdown
