@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type Logger, NullLogger } from "./logger";
 import {
   type DataSourceProvider,
+  extractExtensionFromSourceId,
   getDocumentId,
   type KnowledgeProvider,
   type SyncPlan,
@@ -67,11 +68,26 @@ export class Reconciler {
                 getDocumentId(documentMetadata),
               );
 
-              // Generate safe filename using SHA256 hash
+              // Get file extension from metadata or sourceId
+              let fileExtension = documentMetadata.fileExtension;
+              if (!fileExtension) {
+                // Try to get from provider if available
+                if (sourceProvider.getFileExtension) {
+                  fileExtension =
+                    (await sourceProvider.getFileExtension(getDocumentId(documentMetadata))) ||
+                    undefined;
+                }
+                // If still not available, try to extract from sourceId
+                if (!fileExtension) {
+                  fileExtension = extractExtensionFromSourceId(documentMetadata.sourceId) || "md";
+                }
+              }
+
+              // Generate safe filename using SHA256 hash with appropriate extension
               const hash = createHash("sha256")
                 .update(getDocumentId(documentMetadata))
                 .digest("hex");
-              const tempFilePath = join(tempDir, `${hash}.md`);
+              const tempFilePath = join(tempDir, `${hash}.${fileExtension}`);
 
               await writeFile(tempFilePath, content, "utf-8");
 

@@ -6,6 +6,7 @@ export const DocumentMetadataSchema = z.object({
   sourceId: z.string(),
   title: z.string(),
   lastModified: z.date(),
+  fileExtension: z.string().optional(), // Optional file extension (e.g., "md", "txt", "json")
 });
 
 export type DocumentMetadata = z.infer<typeof DocumentMetadataSchema>;
@@ -48,11 +49,18 @@ export const SyncPlanSchema = z.object({
 
 export type SyncPlan = z.infer<typeof SyncPlanSchema>;
 
+// Utility function to extract file extension from sourceId
+export function extractExtensionFromSourceId(sourceId: string): string | null {
+  const match = sourceId.match(/\.([^./]+)$/);
+  return match ? match[1] : null;
+}
+
 // Provider interfaces
 export interface DataSourceProvider {
   providerId: string;
   fetchDocumentsMetadata(): Promise<DocumentMetadata[]>;
   downloadDocumentContent(documentId: string): Promise<string>;
+  getFileExtension?(documentId: string): Promise<string | null>; // Optional method to get file extension
 }
 
 export interface KnowledgeProvider {
