@@ -1,3 +1,6 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { Client } from "@notionhq/client";
 import { NotionToMarkdown } from "notion-to-md";
 import type { DataSourceProvider, DocumentMetadata } from "../../core/types.js";
@@ -60,15 +63,29 @@ export class NotionProvider implements DataSourceProvider {
       // Convert page blocks to markdown
       const mdblocks = await this.n2m.pageToMarkdown(pageId);
       const mdString = this.n2m.toMarkdownString(mdblocks);
+      const content = mdString.parent || "";
 
-      return mdString.parent || "";
+      // Save to temporary file
+      const tempDir = os.tmpdir();
+      const tempFileName = `notion_${pageId}_${Date.now()}.md`;
+      const tempPath = path.join(tempDir, tempFileName);
+
+      await fs.writeFile(tempPath, content, "utf-8");
+
+      return tempPath; // Return file path instead of content
     } catch (error) {
       // Handle errors (e.g., unsupported blocks, permissions)
       console.error(
         `Failed to convert page ${pageId} to markdown:`,
         error instanceof Error ? error.message : String(error),
       );
-      return "";
+
+      // Return empty file path on error
+      const tempDir = os.tmpdir();
+      const tempFileName = `notion_${pageId}_${Date.now()}_empty.md`;
+      const tempPath = path.join(tempDir, tempFileName);
+      await fs.writeFile(tempPath, "", "utf-8");
+      return tempPath;
     }
   }
 
