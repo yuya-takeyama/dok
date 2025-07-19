@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,7 @@ export class Reconciler {
 
     // Create temporary directory for downloads
     const tempDir = await mkdtemp(join(tmpdir(), "dok-"));
+    const errors: Array<{ operation: (typeof plan.operations)[0]; error: Error }> = [];
 
     try {
       for (const operation of plan.operations) {
@@ -51,52 +53,84 @@ export class Reconciler {
           continue;
         }
 
-        switch (type) {
-          case "create":
-          case "update": {
-            // Download content from source
-            const sourceProvider = this.sourceProviders.get(documentMetadata.providerId);
-            if (!sourceProvider) {
-              throw new Error(`Source provider not found: ${documentMetadata.providerId}`);
+        try {
+          switch (type) {
+            case "create":
+            case "update": {
+              // Download content from source
+              const sourceProvider = this.sourceProviders.get(documentMetadata.providerId);
+              if (!sourceProvider) {
+                throw new Error(`Source provider not found: ${documentMetadata.providerId}`);
+              }
+
+              const content = await sourceProvider.downloadDocumentContent(
+                getDocumentId(documentMetadata),
+              );
+
+              // Generate safe filename using SHA256 hash
+              const hash = createHash("sha256")
+                .update(getDocumentId(documentMetadata))
+                .digest("hex");
+              const tempFilePath = join(tempDir, `${hash}.md`);
+
+              await writeFile(tempFilePath, content, "utf-8");
+
+              // Create or update in target
+              if (type === "create") {
+                await this.targetProvider.createDocumentFromFile(documentMetadata, tempFilePath);
+              } else {
+                await this.targetProvider.updateDocumentFromFile(documentMetadata, tempFilePath);
+              }
+              break;
             }
 
-            const content = await sourceProvider.downloadDocumentContent(
-              getDocumentId(documentMetadata),
-            );
-            const tempFilePath = join(
-              tempDir,
-              `${getDocumentId(documentMetadata).replace(/[^a-zA-Z0-9]/g, "_")}.md`,
-            );
-            await writeFile(tempFilePath, content, "utf-8");
-
-            // Create or update in target
-            if (type === "create") {
-              await this.targetProvider.createDocumentFromFile(documentMetadata, tempFilePath);
-            } else {
-              await this.targetProvider.updateDocumentFromFile(documentMetadata, tempFilePath);
+            case "delete": {
+              // Delete from target
+              await this.targetProvider.deleteDocument(getDocumentId(documentMetadata));
+              break;
             }
-            break;
-          }
 
-          case "delete": {
-            // Delete from target
-            await this.targetProvider.deleteDocument(getDocumentId(documentMetadata));
-            break;
+            case "skip": {
+              // Nothing to do
+              break;
+            }
           }
+        } catch (error) {
+          // Collect error but continue processing other operations
+          const err = error instanceof Error ? error : new Error(String(error));
+          errors.push({ operation, error: err });
 
-          case "skip": {
-            // Nothing to do
-            break;
-          }
+          this.logger.error(`Failed to process operation: ${type}`, {
+            documentId: getDocumentId(documentMetadata),
+            error: err.message,
+          });
         }
       }
 
-      this.logger.info("Reconciliation completed successfully");
-    } catch (error) {
-      this.logger.error("Reconciliation failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+      // Report results
+      const successCount = plan.operations.length - errors.length;
+      if (errors.length > 0) {
+        this.logger.warn("Reconciliation completed with errors", {
+          totalOperations: plan.operations.length,
+          successCount,
+          errorCount: errors.length,
+        });
+
+        // Throw aggregated error
+        const errorSummary = errors
+          .map(
+            ({ operation, error }) =>
+              `${operation.type} ${getDocumentId(operation.documentMetadata)}: ${error.message}`,
+          )
+          .join("\n");
+        throw new Error(
+          `Reconciliation partially failed with ${errors.length} errors:\n${errorSummary}`,
+        );
+      } else {
+        this.logger.info("Reconciliation completed successfully", {
+          totalOperations: plan.operations.length,
+        });
+      }
     } finally {
       // Clean up temporary directory
       await rm(tempDir, { recursive: true, force: true });
