@@ -1,6 +1,5 @@
-import { createReadStream } from "node:fs";
-import axios, { type AxiosInstance } from "axios";
-import FormData from "form-data";
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import type { DocumentMetadata, KnowledgeProvider } from "../../core/types.js";
 import { parseDocumentId } from "../../core/types.js";
 
@@ -26,18 +25,34 @@ interface DifyDocumentsResponse {
 }
 
 export class DifyProvider implements KnowledgeProvider {
-  private client: AxiosInstance;
+  private baseUrl: string;
+  private apiKey: string;
   private datasetId: string;
   private providerId = "dify";
 
   constructor(config: DifyProviderConfig) {
+    this.baseUrl = config.api_url;
+    this.apiKey = config.api_key;
     this.datasetId = config.dataset_id;
-    this.client = axios.create({
-      baseURL: config.api_url,
-      headers: {
-        Authorization: `Bearer ${config.api_key}`,
-      },
+  }
+
+  private async fetchApi(path: string, options: RequestInit = {}): Promise<Response> {
+    const url = new URL(path, this.baseUrl);
+
+    const headers = new Headers(options.headers);
+    headers.set("Authorization", `Bearer ${this.apiKey}`);
+
+    const response = await fetch(url.toString(), {
+      ...options,
+      headers,
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Dify API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    return response;
   }
 
   async fetchDocumentsMetadata(): Promise<DocumentMetadata[]> {
@@ -47,18 +62,19 @@ export class DifyProvider implements KnowledgeProvider {
 
     while (hasMore) {
       try {
-        const response = await this.client.get<DifyDocumentsResponse>(
-          `/datasets/${this.datasetId}/documents`,
-          {
-            params: {
-              page,
-              limit: 100,
-            },
-          },
-        );
+        const params = new URLSearchParams({
+          page: page.toString(),
+          limit: "100",
+        });
 
-        documents.push(...response.data.data);
-        hasMore = response.data.has_more;
+        const response = await this.fetchApi(`/datasets/${this.datasetId}/documents?${params}`, {
+          method: "GET",
+        });
+
+        const data = (await response.json()) as DifyDocumentsResponse;
+
+        documents.push(...data.data);
+        hasMore = data.has_more;
         page++;
       } catch (error) {
         console.error(`Failed to fetch documents from Dify: ${error}`);
@@ -87,8 +103,14 @@ export class DifyProvider implements KnowledgeProvider {
   }
 
   async createDocumentFromFile(metadata: DocumentMetadata, filePath: string): Promise<void> {
+    // Read file content
+    const fileContent = readFileSync(filePath);
+    const fileName = basename(filePath);
+
+    // Create FormData
     const formData = new FormData();
-    formData.append("file", createReadStream(filePath));
+    const fileBlob = new Blob([fileContent], { type: "application/octet-stream" });
+    formData.append("file", fileBlob, fileName);
     formData.append("name", metadata.title);
     formData.append("indexing_technique", "high_quality");
 
@@ -97,10 +119,9 @@ export class DifyProvider implements KnowledgeProvider {
     formData.append("original_document_id", documentId);
 
     try {
-      await this.client.post(`/datasets/${this.datasetId}/documents/create_by_file`, formData, {
-        headers: {
-          ...formData.getHeaders(),
-        },
+      await this.fetchApi(`/datasets/${this.datasetId}/documents/create_by_file`, {
+        method: "POST",
+        body: formData,
       });
       console.log(`Created document: ${metadata.title}`);
     } catch (error) {
@@ -117,18 +138,22 @@ export class DifyProvider implements KnowledgeProvider {
       throw new Error(`Document not found in Dify: ${metadata.sourceId}`);
     }
 
+    // Read file content
+    const fileContent = readFileSync(filePath);
+    const fileName = basename(filePath);
+
+    // Create FormData
     const formData = new FormData();
-    formData.append("file", createReadStream(filePath));
+    const fileBlob = new Blob([fileContent], { type: "application/octet-stream" });
+    formData.append("file", fileBlob, fileName);
     formData.append("name", metadata.title);
 
     try {
-      await this.client.post(
+      await this.fetchApi(
         `/datasets/${this.datasetId}/documents/${difyDocumentId}/update_by_file`,
-        formData,
         {
-          headers: {
-            ...formData.getHeaders(),
-          },
+          method: "POST",
+          body: formData,
         },
       );
       console.log(`Updated document: ${metadata.title}`);
@@ -150,7 +175,9 @@ export class DifyProvider implements KnowledgeProvider {
     }
 
     try {
-      await this.client.delete(`/datasets/${this.datasetId}/documents/${difyDocumentId}`);
+      await this.fetchApi(`/datasets/${this.datasetId}/documents/${difyDocumentId}`, {
+        method: "DELETE",
+      });
       console.log(`Deleted document: ${documentId}`);
     } catch (error) {
       console.error(`Failed to delete document: ${error}`);
@@ -180,24 +207,25 @@ export class DifyProvider implements KnowledgeProvider {
 
     while (hasMore) {
       try {
-        const response = await this.client.get<DifyDocumentsResponse>(
-          `/datasets/${this.datasetId}/documents`,
-          {
-            params: {
-              page,
-              limit: 100,
-            },
-          },
-        );
+        const params = new URLSearchParams({
+          page: page.toString(),
+          limit: "100",
+        });
+
+        const response = await this.fetchApi(`/datasets/${this.datasetId}/documents?${params}`, {
+          method: "GET",
+        });
+
+        const data = (await response.json()) as DifyDocumentsResponse;
 
         // Look for document with matching sourceId in name or ID
-        for (const doc of response.data.data) {
+        for (const doc of data.data) {
           if (doc.id === sourceId || doc.id === `${this.providerId}:${sourceId}`) {
             return doc.id;
           }
         }
 
-        hasMore = response.data.has_more;
+        hasMore = data.has_more;
         page++;
       } catch (error) {
         console.error(`Failed to search for document: ${error}`);
