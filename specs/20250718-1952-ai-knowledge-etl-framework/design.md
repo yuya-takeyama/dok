@@ -16,6 +16,14 @@
 - **テスタビリティ**: 純粋関数により単体テストが容易
 - **予測可能性**: 同じ入力に対して常に同じ出力を保証
 
+### 1.3 効率的なリソース管理
+
+- **メタデータのみでの計画生成**: 文書本体をメモリに保持せず、メタデータ（ID、最終更新日時）のみで同期計画を生成
+- **ストリーミング処理**: 文書本体は一切メモリに載せず、一時ファイル経由で処理
+- **遅延ダウンロード**: 実際にcreate/updateが必要な文書のみ、実行時に一時ファイルへダウンロード
+- **ゼロコピー転送**: ファイルストリームを使用し、メモリへのコピーを回避
+- **自動クリーンアップ**: 処理完了後、一時ファイルを自動削除
+
 ## 2. アーキテクチャ概要
 
 ### 2.1 全体構成
@@ -35,7 +43,7 @@ flowchart TB
         Reconciler["3: Reconciler<br/>計画実行"]
         Reporter["4: Reporter<br/>結果レポート"]
 
-        Fetcher -->|"Documents<br/>(Source & Knowledge)"| Planner
+        Fetcher -->|"Metadata only<br/>(ID, lastModified)"| Planner
         Planner -.->|"generates"| SyncPlan
         SyncPlan -.->|"consumed by"| Reconciler
         Reconciler -->|"Results"| Reporter
@@ -46,9 +54,10 @@ flowchart TB
         Future2["Future: Bedrock/S3 Vector"]
     end
 
-    DS -->|"fetch"| Fetcher
-    Fetcher <-->|"fetch existing"| KP
-    Reconciler -->|"apply changes"| KP
+    DS -->|"fetch metadata"| Fetcher
+    Fetcher <-->|"fetch metadata"| KP
+    DS -->|"download to tempfile"| Reconciler
+    Reconciler -->|"upload from tempfile"| KP
 
     classDef dataSource fill:#4fc3f7,stroke:#0277bd,stroke-width:3px,color:#000
     classDef etlComponent fill:#ba68c8,stroke:#6a1b9a,stroke-width:3px,color:#fff
@@ -72,18 +81,21 @@ flowchart TB
    - バリデーション
 
 2. **Fetcher Layer** (I/O層)
-   - Data Sourceから現在のドキュメント一覧を取得
-   - Knowledge Providerから現在のドキュメント一覧を取得
-   - メタデータ（ID、最終更新日時）の取得
+   - Data Sourceから現在のドキュメントのメタデータ一覧を取得
+   - Knowledge Providerから現在のドキュメントのメタデータ一覧を取得
+   - **文書本体は取得せず**、メタデータ（ID、最終更新日時）のみ取得
 
 3. **Planner Layer** (純粋関数層)
-   - 両側のドキュメント一覧を突合
-   - 実行計画（SyncPlan）の生成
-   - 操作の決定: create, update, delete, skip
+   - 両側のメタデータ一覧を突合
+   - **メタデータのみで**実行計画（SyncPlan）を生成
+   - 最終更新日時の比較により操作を決定: create, update, delete, skip
 
 4. **Reconciler Layer** (I/O層)
    - SyncPlanに基づいて実際の操作を実行
+   - **create/update対象の文書のみ**、実行時に一時ファイルへダウンロード
+   - **メモリを経由せず**、ファイルストリームで直接転送
    - エラーハンドリングとリトライ
+   - 一時ファイルの自動クリーンアップ
    - 進捗状況の追跡
 
 5. **Provider実装**
@@ -96,21 +108,32 @@ flowchart TB
 
 - **一意識別子 (ID)**: Data SourceとKnowledge Provider間で同じドキュメントを識別
 - **ID生成戦略**:
-  - Notion: ページIDをそのまま使用
-  - Dify: Notion IDをprefixとして使用 (例: `notion_<page_id>`)
+  - フォーマット: `<data-source-provider-id>:<original-id>`
+  - 例:
+    - Notion: `notion:<page_id>`
+    - Google Drive: `google-drive:<file_id>`
+    - GitHub: `github:<repository>/<file_path>`
+- **Data Source Provider ID**: データソースを一意に識別する文字列（例: `notion`, `google-drive`, `github`）
+- **設計思想**:
+  - ドキュメントの一意性はデータソース内でのみ保証
+  - 同一コンテンツが異なるデータソース間で移動した場合は、別のドキュメントとして扱う
 
 ### 3.2 同期ロジック
 
+- **メタデータのみで効率的に計画生成**
+- **文書本体は計画時点では取得しない**
+- **最終更新日時の比較のみで更新要否を判断**
+
 ```typescript
-// 純粋関数として実装される同期計画生成
+// 純粋関数として実装される同期計画生成（メタデータのみ）
 function generateSyncPlan(
-  sourceDocuments: Document[],
-  knowledgeDocuments: Document[],
+  sourceMetadata: DocumentMetadata[],
+  knowledgeMetadata: DocumentMetadata[],
 ): SyncPlan {
   const operations: SyncOperation[] = [];
 
   // 1. Create: ソースにあってナレッジにない
-  // 2. Update: 両方にあり、ソースの方が新しい
+  // 2. Update: 両方にあり、ソースの方が新しい（lastModified比較）
   // 3. Delete: ナレッジにあってソースにない
   // 4. Skip: 両方にあり、更新不要
 
@@ -143,7 +166,8 @@ dok/
 │   ├── utils/
 │   │   ├── logger.ts           # ログユーティリティ
 │   │   ├── error.ts            # エラーハンドリング
-│   │   └── retry.ts            # リトライロジック
+│   │   ├── retry.ts            # リトライロジック
+│   │   └── tempfile.ts         # 一時ファイル管理
 │   └── tests/
 │       ├── planner.test.ts     # 同期計画生成のテスト
 │       └── fixtures/           # テストデータ
@@ -160,18 +184,23 @@ dok/
 ### 5.1 Core Types
 
 ```typescript
-// Document型定義（ID管理とメタデータを強化）
-interface Document {
-  id: string; // 一意識別子（プロバイダー間で共通）
-  sourceId: string; // ソース側の元ID
+// DocumentMetadata型定義（これのみを使用、contentは扱わない）
+interface DocumentMetadata {
+  id: string; // 一意識別子（format: <provider-id>:<original-id>）
+  sourceId: string; // ソース側の元ID（プロバイダー固有のID）
+  providerId: string; // Data Source Provider ID（例: 'notion', 'google-drive'）
   title: string;
-  content: string;
   lastModified: Date; // 更新判定に使用
   metadata: {
-    sourceType: string; // 'notion', 'google-drive', etc.
     contentHash?: string; // コンテンツのハッシュ値（オプション）
     customFields?: Record<string, any>;
   };
+}
+
+// 一時ファイル処理用の型
+interface TempFileResult {
+  metadata: DocumentMetadata;
+  filePath: string; // 一時ファイルのパス
 }
 
 // 同期操作の定義
@@ -179,7 +208,7 @@ type SyncOperationType = "create" | "update" | "delete" | "skip";
 
 interface SyncOperation {
   type: SyncOperationType;
-  document: Document;
+  documentMetadata: DocumentMetadata; // 計画時点ではメタデータのみ
   reason: string; // 操作の理由（ログ用）
 }
 
@@ -217,13 +246,14 @@ interface Config {
 }
 
 interface SourceConfig {
-  provider: string;
-  config: Record<string, any>;
+  provider: string; // プロバイダー実装クラス名（例: 'NotionProvider'）
+  providerId: string; // Data Source Provider ID（例: 'notion', 'google-drive'）
+  config: Record<string, any>; // プロバイダー固有の設定
 }
 
 interface KnowledgeConfig {
-  provider: string;
-  config: Record<string, any>;
+  provider: string; // プロバイダー実装クラス名（例: 'DifyProvider'）
+  config: Record<string, any>; // プロバイダー固有の設定
 }
 ```
 
@@ -241,25 +271,39 @@ export class NotionProvider {
     this.databaseId = config.database_id;
   }
 
-  async *fetchDocuments(): AsyncIterator<Document> {
-    // ページネーション対応でデータベースからページを取得
+  async *fetchDocumentsMetadata(): AsyncIterator<DocumentMetadata> {
+    // ページネーション対応でデータベースからメタデータのみ取得
     const pages = await this.client.databases.query({
       database_id: this.databaseId,
     });
 
     for (const page of pages.results) {
       yield {
-        id: `notion_${page.id}`, // Difyとの共通ID
-        sourceId: page.id, // Notion元ID
+        id: `notion:${page.id}`, // 標準化されたID形式
+        sourceId: page.id, // Notion固有のページID
+        providerId: "notion", // Data Source Provider ID
         title: this.extractTitle(page),
-        content: await this.pageToMarkdown(page),
         lastModified: new Date(page.last_edited_time),
         metadata: {
-          sourceType: "notion",
           customFields: page.properties,
         },
       };
     }
+  }
+
+  async downloadDocumentContent(pageId: string): Promise<string> {
+    // ページ本体を取得して一時ファイルに書き込み
+    const page = await this.client.pages.retrieve({ page_id: pageId });
+    const markdown = await this.pageToMarkdown(page);
+
+    // 一時ファイルに書き込み
+    const tempPath = path.join(
+      os.tmpdir(),
+      `notion_${pageId}_${Date.now()}.md`,
+    );
+    await fs.writeFile(tempPath, markdown);
+
+    return tempPath; // ファイルパスを返す
   }
 }
 ```
@@ -278,8 +322,8 @@ export class DifyProvider {
     this.datasetId = config.dataset_id;
   }
 
-  async fetchDocuments(): Promise<Document[]> {
-    // Dify APIから既存ドキュメント一覧を取得
+  async fetchDocumentsMetadata(): Promise<DocumentMetadata[]> {
+    // Dify APIから既存ドキュメントのメタデータ一覧を取得
     const response = await axios.get(
       `${this.baseUrl}/datasets/${this.datasetId}/documents`,
       {
@@ -288,25 +332,79 @@ export class DifyProvider {
     );
 
     return response.data.map((doc: any) => ({
-      id: doc.name, // Notion IDが格納されている
-      sourceId: doc.id,
+      id: doc.name, // Data Source側のID（format: <provider-id>:<original-id>）
+      sourceId: doc.id, // Dify内部のドキュメントID
+      providerId: this.extractProviderId(doc.name), // IDから抽出
       title: doc.title,
-      content: doc.content,
       lastModified: new Date(doc.updated_at),
       metadata: doc.metadata || {},
     }));
   }
 
-  async createDocument(document: Document): Promise<void> {
-    // 新規ドキュメント作成
+  private extractProviderId(id: string): string {
+    // ID形式: <provider-id>:<original-id> からprovider-idを抽出
+    const [providerId] = id.split(":", 2);
+    return providerId;
   }
 
-  async updateDocument(document: Document): Promise<void> {
-    // 既存ドキュメント更新
+  async createDocumentFromFile(
+    metadata: DocumentMetadata,
+    filePath: string,
+  ): Promise<void> {
+    // ファイルから直接アップロード（メモリに載せない）
+    const formData = new FormData();
+    formData.append("name", metadata.id);
+    formData.append("title", metadata.title);
+    formData.append("metadata", JSON.stringify(metadata));
+
+    // ストリームでファイルを読み込んでアップロード
+    const fileStream = fs.createReadStream(filePath);
+    formData.append("file", fileStream);
+
+    await axios.post(
+      `${this.baseUrl}/datasets/${this.datasetId}/documents`,
+      formData,
+      {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          ...formData.getHeaders(),
+        },
+      },
+    );
+  }
+
+  async updateDocumentFromFile(
+    metadata: DocumentMetadata,
+    filePath: string,
+  ): Promise<void> {
+    // 既存ドキュメント更新（ファイルから）
+    const formData = new FormData();
+    formData.append("title", metadata.title);
+    formData.append("metadata", JSON.stringify(metadata));
+
+    const fileStream = fs.createReadStream(filePath);
+    formData.append("file", fileStream);
+
+    await axios.put(
+      `${this.baseUrl}/datasets/${this.datasetId}/documents/${metadata.sourceId}`,
+      formData,
+      {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          ...formData.getHeaders(),
+        },
+      },
+    );
   }
 
   async deleteDocument(documentId: string): Promise<void> {
     // ドキュメント削除
+    await axios.delete(
+      `${this.baseUrl}/datasets/${this.datasetId}/documents/${documentId}`,
+      {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+      },
+    );
   }
 }
 ```
@@ -314,13 +412,13 @@ export class DifyProvider {
 ### 6.3 Planner (純粋関数層)
 
 ```typescript
-// 純粋関数として実装される同期計画生成
+// 純粋関数として実装される同期計画生成（メタデータのみ使用）
 export function generateSyncPlan(
-  sourceDocuments: Document[],
-  knowledgeDocuments: Document[],
+  sourceMetadata: DocumentMetadata[],
+  knowledgeMetadata: DocumentMetadata[],
 ): SyncPlan {
-  const sourceMap = new Map(sourceDocuments.map((d) => [d.id, d]));
-  const knowledgeMap = new Map(knowledgeDocuments.map((d) => [d.id, d]));
+  const sourceMap = new Map(sourceMetadata.map((d) => [d.id, d]));
+  const knowledgeMap = new Map(knowledgeMetadata.map((d) => [d.id, d]));
   const operations: SyncOperation[] = [];
 
   // Create/Update operations
@@ -330,19 +428,19 @@ export function generateSyncPlan(
     if (!knowledgeDoc) {
       operations.push({
         type: "create",
-        document: sourceDoc,
+        documentMetadata: sourceDoc,
         reason: "Document exists in source but not in knowledge",
       });
     } else if (sourceDoc.lastModified > knowledgeDoc.lastModified) {
       operations.push({
         type: "update",
-        document: sourceDoc,
+        documentMetadata: sourceDoc,
         reason: `Source document is newer (${sourceDoc.lastModified} > ${knowledgeDoc.lastModified})`,
       });
     } else {
       operations.push({
         type: "skip",
-        document: sourceDoc,
+        documentMetadata: sourceDoc,
         reason: "Document is up to date",
       });
     }
@@ -353,7 +451,7 @@ export function generateSyncPlan(
     if (!sourceMap.has(id)) {
       operations.push({
         type: "delete",
-        document: knowledgeDoc,
+        documentMetadata: knowledgeDoc,
         reason: "Document no longer exists in source",
       });
     }
@@ -386,14 +484,14 @@ class ETLEngine {
       config.knowledges[0],
     );
 
-    // 2. 現在の状態を取得（Fetcher）
-    logger.info("Fetching current state...");
-    const sourceDocuments = await this.fetchAllDocuments(sourceProvider);
-    const knowledgeDocuments = await knowledgeProvider.fetchDocuments();
+    // 2. 現在の状態を取得（Fetcher - メタデータのみ）
+    logger.info("Fetching current metadata...");
+    const sourceMetadata = await this.fetchAllMetadata(sourceProvider);
+    const knowledgeMetadata = await knowledgeProvider.fetchDocumentsMetadata();
 
-    // 3. 同期計画を生成（Planner - 純粋関数）
+    // 3. 同期計画を生成（Planner - 純粋関数、メタデータのみ使用）
     logger.info("Generating sync plan...");
-    const syncPlan = generateSyncPlan(sourceDocuments, knowledgeDocuments);
+    const syncPlan = generateSyncPlan(sourceMetadata, knowledgeMetadata);
     logger.info(`Sync plan summary:`, syncPlan.summary);
 
     // 4. ドライランモードのチェック
@@ -403,9 +501,13 @@ class ETLEngine {
       return;
     }
 
-    // 5. 計画を実行（Reconciler）
+    // 5. 計画を実行（Reconciler - 必要時のみ文書取得）
     logger.info("Executing sync plan...");
-    const results = await this.reconcile(syncPlan, knowledgeProvider);
+    const results = await this.reconcile(
+      syncPlan,
+      sourceProvider,
+      knowledgeProvider,
+    );
 
     // 6. 結果レポート
     this.reportResults(results);
@@ -413,7 +515,8 @@ class ETLEngine {
 
   private async reconcile(
     plan: SyncPlan,
-    provider: DifyProvider,
+    sourceProvider: NotionProvider,
+    knowledgeProvider: DifyProvider,
   ): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
 
@@ -421,16 +524,33 @@ class ETLEngine {
       if (operation.type === "skip") continue;
 
       const startTime = Date.now();
+      let tempFilePath: string | null = null;
+
       try {
         switch (operation.type) {
           case "create":
-            await provider.createDocument(operation.document);
-            break;
           case "update":
-            await provider.updateDocument(operation.document);
+            // 一時ファイルにダウンロード（メモリに載せない）
+            tempFilePath = await sourceProvider.downloadDocumentContent(
+              operation.documentMetadata.sourceId,
+            );
+
+            if (operation.type === "create") {
+              await knowledgeProvider.createDocumentFromFile(
+                operation.documentMetadata,
+                tempFilePath,
+              );
+            } else {
+              await knowledgeProvider.updateDocumentFromFile(
+                operation.documentMetadata,
+                tempFilePath,
+              );
+            }
             break;
           case "delete":
-            await provider.deleteDocument(operation.document.id);
+            await knowledgeProvider.deleteDocument(
+              operation.documentMetadata.id,
+            );
             break;
         }
 
@@ -446,6 +566,15 @@ class ETLEngine {
           error: error as Error,
           duration: Date.now() - startTime,
         });
+      } finally {
+        // 一時ファイルのクリーンアップ
+        if (tempFilePath) {
+          try {
+            await fs.unlink(tempFilePath);
+          } catch {
+            // クリーンアップエラーは無視
+          }
+        }
       }
     }
 
@@ -474,6 +603,7 @@ class ETLEngine {
 
 - `@notionhq/client`: Notion API Client
 - `axios`: HTTP Client for Dify API
+- `form-data`: Multipart form data for file uploads
 - `yaml`: YAML Parser
 - `zod`: Schema Validation
 - `winston`: Logging
@@ -503,6 +633,36 @@ dok run --config config.yaml --log-level debug
 dok --help
 ```
 
+### 9.1 設定ファイル例
+
+```yaml
+# config.yaml
+sources:
+  - provider: NotionProvider
+    providerId: notion
+    config:
+      database_id: ${NOTION_DATABASE_ID}
+      # 必要に応じて追加設定
+      filters:
+        status: published
+
+knowledges:
+  - provider: DifyProvider
+    config:
+      dataset_id: ${DIFY_DATASET_ID}
+      # バッチサイズなどの設定
+      batch_size: 10
+
+options:
+  dryRun: false
+  logLevel: info
+  # リトライ設定
+  retry:
+    maxAttempts: 3
+    initialDelay: 1000 # ms
+    maxDelay: 10000 # ms
+```
+
 ## 10. テスト戦略
 
 ### 10.1 純粋関数のユニットテスト
@@ -514,12 +674,18 @@ import { generateSyncPlan } from "../core/planner";
 
 describe("generateSyncPlan", () => {
   it("should create new documents", () => {
-    const sourceDocuments = [
-      { id: "doc1", lastModified: new Date("2024-01-01") },
+    const sourceMetadata: DocumentMetadata[] = [
+      {
+        id: "doc1",
+        sourceId: "page1",
+        title: "Test Document",
+        lastModified: new Date("2024-01-01"),
+        metadata: { sourceType: "notion" },
+      },
     ];
-    const knowledgeDocuments = [];
+    const knowledgeMetadata: DocumentMetadata[] = [];
 
-    const plan = generateSyncPlan(sourceDocuments, knowledgeDocuments);
+    const plan = generateSyncPlan(sourceMetadata, knowledgeMetadata);
 
     expect(plan.operations).toHaveLength(1);
     expect(plan.operations[0].type).toBe("create");
