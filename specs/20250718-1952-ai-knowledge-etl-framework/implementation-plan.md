@@ -262,7 +262,10 @@
 - ✅ Fetcher Layer: メタデータ取得の抽象化
 - ✅ Planner Layer: 純粋関数による同期計画生成
 - ✅ Reconciler Layer: SyncPlanに基づく実行とクリーンアップ
+  - 単一のtargetProviderを扱うように簡略化（Single Responsibility Principle）
+  - Engineレベルで各ターゲットに対して個別にReconcilerを実行
 - ✅ Engine: 全体のフロー制御
+  - 各ターゲットに対して独立した同期プランを生成・実行
 
 ### テスト
 
