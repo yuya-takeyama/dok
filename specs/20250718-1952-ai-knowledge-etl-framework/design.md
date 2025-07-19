@@ -246,22 +246,43 @@ interface SyncResult {
 ### 5.2 Configuration Schema
 
 ```typescript
+// 新しい設定構造：多対多の同期パターンに対応
 interface Config {
-  sources: SourceConfig[];
-  knowledges: KnowledgeConfig[];
+  // プロバイダーの事前定義（DRY原則）
+  providers?: {
+    sources?: Record<string, SourceConfig>;
+    targets?: Record<string, TargetConfig>;
+  };
+
+  // 同期ジョブの定義（Job IDをキーとするマップ）
+  syncJobs: Record<string, SyncJobConfig>;
+
+  // グローバルオプション
   options?: {
     dryRun?: boolean;
     logLevel?: "debug" | "info" | "warn" | "error";
   };
 }
 
+interface SyncJobConfig {
+  name?: string; // ジョブの説明（省略時はJob IDを使用）
+  sources: string[] | SourceConfig[]; // プロバイダーIDの参照、またはインライン定義
+  targets: string[] | TargetConfig[]; // プロバイダーIDの参照、またはインライン定義
+  options?: {
+    enabled?: boolean; // ジョブの有効/無効
+    schedule?: string; // cron形式（将来の拡張用）
+  };
+}
+
 interface SourceConfig {
+  id?: string; // 参照用のID（providers定義時のみ）
   provider: string; // プロバイダー実装クラス名（例: 'NotionProvider'）
   providerId: string; // Data Source Provider ID（例: 'notion', 'google-drive'）
   config: Record<string, any>; // プロバイダー固有の設定
 }
 
-interface KnowledgeConfig {
+interface TargetConfig {
+  id?: string; // 参照用のID（providers定義時のみ）
   provider: string; // プロバイダー実装クラス名（例: 'DifyProvider'）
   config: Record<string, any>; // プロバイダー固有の設定
 }
@@ -482,48 +503,84 @@ export function generateSyncPlan(
 
 ```typescript
 class ETLEngine {
-  async execute(config: Config): Promise<void> {
-    // 1. Providerの初期化
-    const sourceProvider = await this.initializeSourceProvider(
-      config.sources[0],
+  async execute(config: Config, jobIds?: string[]): Promise<void> {
+    // 実行するジョブを決定
+    const jobsToRun = this.selectJobs(config.syncJobs, jobIds);
+
+    // 各ジョブを実行
+    for (const [jobId, jobConfig] of Object.entries(jobsToRun)) {
+      if (jobConfig.options?.enabled === false) {
+        logger.info(`Skipping disabled job: ${jobId}`);
+        continue;
+      }
+
+      logger.info(
+        `=== Executing job: ${jobId} (${jobConfig.name || jobId}) ===`,
+      );
+      await this.executeJob(jobId, jobConfig, config);
+    }
+  }
+
+  private async executeJob(
+    jobId: string,
+    jobConfig: SyncJobConfig,
+    globalConfig: Config,
+  ): Promise<void> {
+    // 1. ソースプロバイダーの初期化と取得
+    const sourceProviders = await this.initializeSourceProviders(
+      jobConfig.sources,
+      globalConfig.providers?.sources,
     );
-    const knowledgeProvider = await this.initializeKnowledgeProvider(
-      config.knowledges[0],
+
+    // 2. ターゲットプロバイダーの初期化
+    const targetProviders = await this.initializeTargetProviders(
+      jobConfig.targets,
+      globalConfig.providers?.targets,
     );
 
-    // 2. 現在の状態を取得（Fetcher - メタデータのみ）
-    logger.info("Fetching current metadata...");
-    const sourceMetadata = await this.fetchAllMetadata(sourceProvider);
-    const knowledgeMetadata = await knowledgeProvider.fetchDocumentsMetadata();
-
-    // 3. 同期計画を生成（Planner - 純粋関数、メタデータのみ使用）
-    logger.info("Generating sync plan...");
-    const syncPlan = generateSyncPlan(sourceMetadata, knowledgeMetadata);
-    logger.info(`Sync plan summary:`, syncPlan.summary);
-
-    // 4. ドライランモードのチェック
-    if (config.options?.dryRun) {
-      logger.info("Dry run mode - no changes will be made");
-      this.printPlan(syncPlan);
-      return;
+    // 3. 全ソースからメタデータを収集
+    logger.info(`Fetching metadata from ${sourceProviders.length} sources...`);
+    const allSourceMetadata: DocumentMetadata[] = [];
+    for (const provider of sourceProviders) {
+      const metadata = await this.fetchAllMetadata(provider);
+      allSourceMetadata.push(...metadata);
     }
 
-    // 5. 計画を実行（Reconciler - 必要時のみ文書取得）
-    logger.info("Executing sync plan...");
-    const results = await this.reconcile(
-      syncPlan,
-      sourceProvider,
-      knowledgeProvider,
-    );
+    // 4. 各ターゲットに対して同期を実行
+    for (const targetProvider of targetProviders) {
+      logger.info(`Syncing to target: ${targetProvider.constructor.name}`);
 
-    // 6. 結果レポート
-    this.reportResults(results);
+      // ターゲットの現在の状態を取得
+      const targetMetadata = await targetProvider.fetchDocumentsMetadata();
+
+      // 同期計画を生成
+      const syncPlan = generateSyncPlan(allSourceMetadata, targetMetadata);
+      logger.info(`Sync plan for target:`, syncPlan.summary);
+
+      // ドライランモードのチェック
+      if (globalConfig.options?.dryRun) {
+        logger.info("Dry run mode - no changes will be made");
+        this.printPlan(syncPlan);
+        continue;
+      }
+
+      // 計画を実行（Reconciler - 必要時のみ文書取得）
+      logger.info("Executing sync plan...");
+      const results = await this.reconcile(
+        syncPlan,
+        sourceProviders,
+        targetProvider,
+      );
+
+      // 結果レポート
+      this.reportResults(results);
+    }
   }
 
   private async reconcile(
     plan: SyncPlan,
-    sourceProvider: NotionProvider,
-    knowledgeProvider: DifyProvider,
+    sourceProviders: DataSourceProvider[],
+    targetProvider: KnowledgeProvider,
   ): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
 
@@ -537,27 +594,35 @@ class ETLEngine {
         switch (operation.type) {
           case "create":
           case "update":
+            // 適切なソースプロバイダーを特定
+            const sourceProvider = sourceProviders.find(
+              (p) => p.providerId === operation.documentMetadata.providerId,
+            );
+            if (!sourceProvider) {
+              throw new Error(
+                `Source provider not found: ${operation.documentMetadata.providerId}`,
+              );
+            }
+
             // ドキュメントを取得・変換し、一時ファイルパスを取得
             tempFilePath = await sourceProvider.downloadDocumentContent(
               operation.documentMetadata.sourceId,
             );
 
             if (operation.type === "create") {
-              await knowledgeProvider.createDocumentFromFile(
+              await targetProvider.createDocumentFromFile(
                 operation.documentMetadata,
                 tempFilePath,
               );
             } else {
-              await knowledgeProvider.updateDocumentFromFile(
+              await targetProvider.updateDocumentFromFile(
                 operation.documentMetadata,
                 tempFilePath,
               );
             }
             break;
           case "delete":
-            await knowledgeProvider.deleteDocument(
-              operation.documentMetadata.id,
-            );
+            await targetProvider.deleteDocument(operation.documentMetadata.id);
             break;
         }
 
@@ -618,11 +683,20 @@ class ETLEngine {
 ## 9. CLIインターフェース
 
 ```bash
-# 基本実行
+# 基本実行（全ジョブを実行）
 dok run --config config.yaml
+
+# 特定のジョブのみ実行
+dok run --config config.yaml --job <job-id>
+
+# 複数ジョブを実行
+dok run --config config.yaml --job <job-id1>,<job-id2>
 
 # ドライラン
 dok run --config config.yaml --dry-run
+
+# 特定ジョブのドライラン
+dok run --config config.yaml --job <job-id> --dry-run
 
 # デバッグモード
 dok run --config config.yaml --log-level debug
@@ -633,38 +707,142 @@ dok --help
 
 ### 9.1 設定ファイル例
 
-```yaml
-# config.yaml
-sources:
-  - provider: NotionProvider
-    providerId: notion
-    config:
-      database_id: ${NOTION_DATABASE_ID}
-      # 必要に応じて追加設定
-      filters:
-        status: published
+#### シンプルな例（1対1の同期）
 
-knowledges:
-  - provider: DifyProvider
-    config:
-      dataset_id: ${DIFY_DATASET_ID}
-      # バッチサイズなどの設定
-      batch_size: 10
+```yaml
+# config-simple.yaml
+syncJobs:
+  notion-to-dify:
+    sources:
+      - provider: NotionProvider
+        providerId: notion
+        config:
+          database_id: ${NOTION_DATABASE_ID}
+    targets:
+      - provider: DifyProvider
+        config:
+          dataset_id: ${DIFY_DATASET_ID}
 
 options:
   dryRun: false
   logLevel: info
-  # リトライ設定
-  retry:
-    maxAttempts: 3
-    initialDelay: 1000 # ms
-    maxDelay: 10000 # ms
+```
+
+#### 複雑な例（部署別ナレッジ管理）
+
+```yaml
+# config-enterprise.yaml
+# プロバイダーの事前定義
+providers:
+  sources:
+    notion-sales:
+      provider: NotionProvider
+      providerId: notion
+      config:
+        database_id: ${NOTION_SALES_DB_ID}
+        filters:
+          status: published
+
+    notion-dev:
+      provider: NotionProvider
+      providerId: notion
+      config:
+        database_id: ${NOTION_DEV_DB_ID}
+
+    gdrive-sales:
+      provider: GoogleDriveProvider
+      providerId: google-drive
+      config:
+        folder_id: ${GDRIVE_SALES_FOLDER_ID}
+
+  targets:
+    dify-sales:
+      provider: DifyProvider
+      config:
+        dataset_id: ${DIFY_SALES_DATASET_ID}
+        batch_size: 10
+
+    dify-dev:
+      provider: DifyProvider
+      config:
+        dataset_id: ${DIFY_DEV_DATASET_ID}
+
+    dify-company:
+      provider: DifyProvider
+      config:
+        dataset_id: ${DIFY_COMPANY_DATASET_ID}
+
+    pinecone-test:
+      provider: PineconeProvider
+      config:
+        index_name: ${PINECONE_INDEX_NAME}
+
+# 同期ジョブの定義
+syncJobs:
+  # 営業部: 複数ソース → 複数ターゲット
+  sales-knowledge-sync:
+    name: "営業部ナレッジ同期"
+    sources: [notion-sales, gdrive-sales]
+    targets: [dify-sales, dify-company]
+
+  # 開発部: 単一ソース → 複数ターゲット
+  dev-knowledge-sync:
+    name: "開発部ナレッジ同期"
+    sources: [notion-dev]
+    targets: [dify-dev, dify-company]
+
+  # 移行テスト: 同じソースを複数のターゲットへ
+  migration-test:
+    name: "Dify→Pinecone移行テスト"
+    sources: [notion-sales]
+    targets: [dify-sales, pinecone-test]
+    options:
+      enabled: false # テスト時のみ有効化
+
+options:
+  dryRun: false
+  logLevel: info
 ```
 
 ### 9.2 実行モード
 
-- **ローカル実行**: `dok run --config config.yaml`
-- **GitHub Actions**: ワークフロー内でCLIを実行
+#### コマンドライン実行
+
+```bash
+# すべてのジョブを実行
+dok run --config config.yaml
+
+# 特定のジョブのみ実行
+dok run --config config.yaml --job sales-knowledge-sync
+
+# 複数のジョブを実行
+dok run --config config.yaml --job sales-knowledge-sync,dev-knowledge-sync
+
+# ドライランで特定のジョブを確認
+dok run --config config.yaml --job migration-test --dry-run
+```
+
+#### GitHub Actions実行
+
+```yaml
+# .github/workflows/sync-knowledge.yml
+name: Sync Knowledge Base
+on:
+  schedule:
+    - cron: "0 */6 * * *" # 6時間ごと
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: npx dok run --config config/production.yaml
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          DIFY_API_KEY: ${{ secrets.DIFY_API_KEY }}
+```
+
 - **環境変数**: APIキーなどの機密情報は環境変数で管理
 
 ## 10. テスト戦略
