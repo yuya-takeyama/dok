@@ -23,7 +23,7 @@
 
    ```bash
    # Production
-   pnpm add @notionhq/client axios form-data yaml zod winston
+   pnpm add @notionhq/client commander yaml zod winston
 
    # Development
    pnpm add -D typescript @types/node tsx @biomejs/biome prettier vitest
@@ -214,9 +214,9 @@
 - [x] Core Types定義
 - [x] Fetcher/Planner/Reconciler の基本実装
 - [x] Notion Provider（メタデータ取得・コンテンツダウンロード）
-- [ ] Dify Provider（CRUD操作）
-- [ ] 基本的なCLI
-- [ ] ドライランモード
+- [x] Dify Provider（CRUD操作）
+- [x] 基本的なCLI
+- [x] ドライランモード
 
 ### Phase 1.1（次フェーズ）
 
@@ -246,6 +246,12 @@
 - **変換エラー**: ログ出力して継続
 - **ファイルI/Oエラー**: 即座に中断
 
+### HTTP通信
+
+- **標準fetch API**: axios依存を削除し、Node.js標準のfetch APIを使用
+- **FormData対応**: 標準のFormDataとBlobを使用してファイルアップロード
+- **エラーハンドリング**: response.okチェックによる適切なエラー処理
+
 ## 見積もり時間
 
 - 総実装時間: 約5.5時間
@@ -255,6 +261,17 @@
 - Step 6-8: 1.5時間（CLI・テスト）
 
 ## 実装済み機能（2025-07-19）
+
+### CLI実装
+
+- ✅ Commander.jsによるCLIフレームワーク
+  - `dok run`: 同期ジョブの実行
+    - `-c, --config <path>`: 設定ファイルパス（必須）
+    - `-j, --job <name>`: 特定のジョブを実行（省略時は全ジョブ）
+    - `-d, --dry-run`: ドライランモード
+    - `-l, --log-level <level>`: ログレベル設定
+  - `dok validate`: 設定ファイルの検証
+  - `dok list-jobs`: 利用可能なジョブの一覧表示
 
 ### Core Engine実装
 
@@ -290,19 +307,40 @@
   - getDocumentId, parseDocumentId, extractExtensionFromSourceId
   - エッジケースを含む包括的なテスト
 
+### Dify Provider実装
+
+- ✅ Dify Provider実装完了
+  - 標準fetch APIによるHTTP通信
+  - メタデータ取得（ページネーション対応）
+  - CRUD操作（create/update/delete）
+  - FormDataとBlobによるファイルアップロード
+  - エラー時の適切な例外処理
+
+### 設定管理
+
+- ✅ YAML設定ファイルの読み込みと検証
+  - Zodスキーマによる型安全な検証
+  - 環境変数展開（${VAR_NAME}と$VAR_NAME形式をサポート）
+  - ジョブベースの設定構造
+
+### ロガー実装
+
+- ✅ Winston統合
+  - 構造化ロギング
+  - カラー出力対応
+  - ログレベル設定（debug, info, warn, error）
+
 ### 次のステップ
 
 1. ~~**Notion Provider実装**~~ ✅ 完了
-2. **Dify Provider実装**
-   - APIクライアント初期化
-   - CRUD操作の実装
-   - ファイルアップロード処理
-
-3. **CLI/設定管理**
-   - CLIパーサー実装
-   - YAML設定ファイル読み込み
-   - 環境変数展開
-   - 構造化ロガー（Winston）設定
+2. ~~**Dify Provider実装**~~ ✅ 完了
+3. ~~**CLI/設定管理**~~ ✅ 完了
+4. **Phase 1.1の機能**
+   - より詳細なエラーハンドリング
+   - リトライ機構
+   - 進捗バー表示
+   - 部分的な同期（フィルター機能）
+   - 複数ジョブの並列実行
 
 ## 成功基準
 
