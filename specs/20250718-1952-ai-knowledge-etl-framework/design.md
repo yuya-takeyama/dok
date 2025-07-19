@@ -18,10 +18,10 @@
 
 ### 1.3 効率的なリソース管理
 
-- **メタデータのみでの計画生成**: 文書本体をメモリに保持せず、メタデータ（ID、最終更新日時）のみで同期計画を生成
-- **ストリーミング処理**: 文書本体は一切メモリに載せず、一時ファイル経由で処理
-- **遅延ダウンロード**: 実際にcreate/updateが必要な文書のみ、実行時に一時ファイルへダウンロード
-- **ゼロコピー転送**: ファイルストリームを使用し、メモリへのコピーを回避
+- **メタデータのみでの計画生成**: Plannerは文書本体に一切依存せず、メタデータ（ID、最終更新日時）のみで同期計画を生成
+- **計画と実行の分離**: 同期計画の生成時には文書内容を扱わず、実行時にのみ必要な文書を処理
+- **遅延ダウンロード**: 実際にcreate/updateが必要な文書のみ、実行時に取得・変換
+- **プロバイダー固有の処理**: NotionのようにMarkdown変換が必要な場合も、Reconciler実行時にのみ処理
 - **自動クリーンアップ**: 処理完了後、一時ファイルを自動削除
 
 ## 2. アーキテクチャ概要
@@ -82,8 +82,8 @@ flowchart TB
 
 4. **Reconciler Layer** (I/O層)
    - SyncPlanに基づいて実際の操作を実行
-   - **create/update対象の文書のみ**、実行時に一時ファイルへダウンロード
-   - **メモリを経由せず**、ファイルストリームで直接転送
+   - **create/update対象の文書のみ**、実行時に取得・処理
+   - **プロバイダー固有の実装**: Notionはblocks→Markdown変換、Google Driveは直接ファイル取得など
    - エラーハンドリングとリトライ
    - 一時ファイルの自動クリーンアップ
    - 進捗状況の追跡
@@ -300,11 +300,11 @@ export class NotionProvider implements DataSourceProvider {
   }
 
   async downloadDocumentContent(pageId: string): Promise<string> {
-    // ページ本体を取得して一時ファイルに書き込み
+    // ページ本体を取得してMarkdownに変換（この処理はメモリ上で実行）
     const page = await this.client.pages.retrieve({ page_id: pageId });
     const markdown = await this.pageToMarkdown(page);
 
-    // 一時ファイルに書き込み
+    // 変換結果を一時ファイルに保存
     const tempPath = path.join(
       os.tmpdir(),
       `notion_${pageId}_${Date.now()}.md`,
@@ -364,7 +364,7 @@ export class DifyProvider implements KnowledgeProvider {
     formData.append("title", metadata.title);
     formData.append("metadata", JSON.stringify(metadata));
 
-    // ストリームでファイルを読み込んでアップロード
+    // 一時ファイルからアップロード（大きなファイルでもメモリ効率的）
     const fileStream = fs.createReadStream(filePath);
     formData.append("file", fileStream);
 
@@ -537,7 +537,7 @@ class ETLEngine {
         switch (operation.type) {
           case "create":
           case "update":
-            // 一時ファイルにダウンロード（メモリに載せない）
+            // ドキュメントを取得・変換し、一時ファイルパスを取得
             tempFilePath = await sourceProvider.downloadDocumentContent(
               operation.documentMetadata.sourceId,
             );
