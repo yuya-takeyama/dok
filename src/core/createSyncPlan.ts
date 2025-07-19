@@ -44,7 +44,7 @@ export function createSyncPlan(
   }
 
   // Check for deletes - remaining items in targetMap
-  for (const [_, target] of targetMap) {
+  for (const target of targetMap.values()) {
     operations.push({
       type: "delete",
       documentMetadata: target,
