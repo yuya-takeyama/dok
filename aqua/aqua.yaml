@@ -13,3 +13,4 @@ registries:
 packages:
   - name: pnpm/pnpm@v10.13.1
   - name: cli/cli@v2.76.0
+  - name: suzuki-shunsuke/pinact@v3.3.2
