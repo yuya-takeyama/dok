@@ -1,6 +1,6 @@
 import { type DocumentMetadata, getDocumentId, type SyncOperation, type SyncPlan } from "./types";
 
-export function plan(
+export function createSyncPlan(
   sourceMetadata: DocumentMetadata[],
   targetMetadata: DocumentMetadata[],
 ): SyncPlan {

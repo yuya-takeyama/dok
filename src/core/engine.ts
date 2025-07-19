@@ -1,6 +1,6 @@
 import { Fetcher } from "./fetcher";
 import { type Logger, NullLogger } from "./logger";
-import { plan } from "./planner";
+import { createSyncPlan } from "./createSyncPlan";
 import { Reconciler, type ReconcilerOptions } from "./reconciler";
 import type { DataSourceProvider, KnowledgeProvider } from "./types";
 
@@ -54,10 +54,10 @@ export class ETLEngine {
 
       // Generate sync plan for this target
       this.logger.info("Generating sync plan for target");
-      const syncPlan = plan(sourceMetadata, targetMetadata);
+      const plan = createSyncPlan(sourceMetadata, targetMetadata);
 
       this.logger.info("Sync plan generated for target", {
-        summary: syncPlan.summary,
+        summary: plan.summary,
       });
 
       // Execute sync plan for this target
@@ -65,7 +65,7 @@ export class ETLEngine {
         logger: this.logger,
         dryRun: this.options?.dryRun,
       });
-      await reconciler.execute(syncPlan);
+      await reconciler.execute(plan);
     }
 
     this.logger.info("ETL job completed", { jobName: this.jobName });

@@ -11,7 +11,7 @@
 
 ## 実装ステップ
 
-### Step 1: プロジェクトセットアップ（30分）
+### Step 1: プロジェクトセットアップ（30分）【完了】
 
 1. **プロジェクト初期化**
    - `pnpm init`
@@ -35,17 +35,21 @@
    - `.prettierrc`
    - `.gitignore`
 
-### Step 2: Core Types とインターフェース定義（45分）
+### Step 2: Core Types とインターフェース定義（45分）【完了】
 
 1. **基本型定義** (`src/core/types.ts`)
 
    ```typescript
    interface DocumentMetadata {
-     id: string; // format: <provider-id>:<original-id>
-     sourceId: string;
-     providerId: string;
+     providerId: string; // Data Source Provider ID
+     sourceId: string; // ソース側の元ID
      title: string;
      lastModified: Date;
+   }
+
+   // ヘルパー関数
+   function getDocumentId(metadata: DocumentMetadata): string {
+     return `${metadata.providerId}:${metadata.sourceId}`;
    }
 
    interface SyncOperation {
@@ -97,13 +101,13 @@
    - Zodによる設定スキーマ定義
    - 新しいjobsベースの設定構造
 
-### Step 3: Core Engine 実装（60分）
+### Step 3: Core Engine 実装（60分）【完了】
 
 1. **Fetcher Layer** (`src/core/fetcher.ts`)
    - メタデータ取得の抽象化
    - Provider間の差異を吸収
 
-2. **Planner Layer** (`src/core/planner.ts`)
+2. **Planner Layer** (`src/core/createSyncPlan.ts`)
    - 純粋関数として実装
    - メタデータのみで同期計画を生成
    - create/update/delete/skip の判定ロジック

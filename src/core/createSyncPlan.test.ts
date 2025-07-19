@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { plan } from "./planner";
+import { createSyncPlan } from "./createSyncPlan";
 import { type DocumentMetadata, getDocumentId } from "./types";
 
-describe("plan", () => {
+describe("createSyncPlan", () => {
   const createMetadata = (id: string, title: string, lastModified: Date): DocumentMetadata => {
     const [providerId, sourceId] = id.split(":");
     return {
@@ -20,7 +20,7 @@ describe("plan", () => {
     ];
     const targetMetadata: DocumentMetadata[] = [];
 
-    const result = plan(sourceMetadata, targetMetadata);
+    const result = createSyncPlan(sourceMetadata, targetMetadata);
 
     expect(result.operations).toHaveLength(2);
     expect(result.operations[0]).toMatchObject({
@@ -50,7 +50,7 @@ describe("plan", () => {
       createMetadata("notion:doc1", "Document 1", new Date("2024-01-01")),
     ];
 
-    const result = plan(sourceMetadata, targetMetadata);
+    const result = createSyncPlan(sourceMetadata, targetMetadata);
 
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0]).toMatchObject({
@@ -66,7 +66,7 @@ describe("plan", () => {
     const sourceMetadata: DocumentMetadata[] = [createMetadata("notion:doc1", "Document 1", date)];
     const targetMetadata: DocumentMetadata[] = [createMetadata("notion:doc1", "Document 1", date)];
 
-    const result = plan(sourceMetadata, targetMetadata);
+    const result = createSyncPlan(sourceMetadata, targetMetadata);
 
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0]).toMatchObject({
@@ -84,7 +84,7 @@ describe("plan", () => {
       createMetadata("notion:doc2", "Document 2", new Date("2024-01-02")),
     ];
 
-    const result = plan(sourceMetadata, targetMetadata);
+    const result = createSyncPlan(sourceMetadata, targetMetadata);
 
     expect(result.operations).toHaveLength(2);
     expect(result.operations[0]).toMatchObject({
@@ -112,7 +112,7 @@ describe("plan", () => {
       createMetadata("notion:doc4", "Document 4", new Date("2024-01-01")), // will be deleted
     ];
 
-    const result = plan(sourceMetadata, targetMetadata);
+    const result = createSyncPlan(sourceMetadata, targetMetadata);
 
     expect(result.operations).toHaveLength(4);
 
@@ -144,7 +144,7 @@ describe("plan", () => {
   });
 
   it("should handle empty inputs", () => {
-    const result = plan([], []);
+    const result = createPlan([], []);
 
     expect(result.operations).toHaveLength(0);
     expect(result.summary).toEqual({

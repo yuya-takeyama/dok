@@ -117,7 +117,7 @@ flowchart TB
 
 ```typescript
 // 純粋関数として実装される同期計画生成（メタデータのみ）
-function generateSyncPlan(
+function createSyncPlan(
   sourceMetadata: DocumentMetadata[],
   knowledgeMetadata: DocumentMetadata[],
 ): SyncPlan {
@@ -445,7 +445,7 @@ export class DifyProvider implements KnowledgeProvider {
 
 ```typescript
 // 純粋関数として実装される同期計画生成（メタデータのみ使用）
-export function generateSyncPlan(
+export function createSyncPlan(
   sourceMetadata: DocumentMetadata[],
   knowledgeMetadata: DocumentMetadata[],
 ): SyncPlan {
@@ -560,20 +560,20 @@ class ETLEngine {
       const targetMetadata = await targetProvider.fetchDocumentsMetadata();
 
       // 同期計画を生成
-      const syncPlan = generateSyncPlan(allSourceMetadata, targetMetadata);
-      logger.info(`Sync plan for target:`, syncPlan.summary);
+      const plan = createSyncPlan(allSourceMetadata, targetMetadata);
+      logger.info(`Sync plan for target:`, plan.summary);
 
       // ドライランモードのチェック（CLIから渡される）
       if (this.options?.dryRun) {
         logger.info("Dry run mode - no changes will be made");
-        this.printPlan(syncPlan);
+        this.printPlan(plan);
         continue;
       }
 
       // 計画を実行（Reconciler - 必要時のみ文書取得）
       logger.info("Executing sync plan...");
       const results = await this.reconcile(
-        syncPlan,
+        plan,
         sourceProviders,
         targetProvider,
       );
@@ -871,7 +871,7 @@ describe("generateSyncPlan", () => {
     ];
     const knowledgeMetadata: DocumentMetadata[] = [];
 
-    const plan = generateSyncPlan(sourceMetadata, knowledgeMetadata);
+    const plan = createSyncPlan(sourceMetadata, knowledgeMetadata);
 
     expect(plan.operations).toHaveLength(1);
     expect(plan.operations[0].type).toBe("create");
