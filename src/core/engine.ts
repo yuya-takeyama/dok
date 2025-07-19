@@ -15,9 +15,9 @@ export class ETLEngine {
   private readonly jobName?: string;
 
   constructor(
-    private sourceProviders: DataSourceProvider[],
-    private targetProviders: KnowledgeProvider[],
-    private options: EngineOptions = {},
+    sourceProviders: DataSourceProvider[],
+    private readonly targetProviders: KnowledgeProvider[],
+    private readonly options: EngineOptions = {},
   ) {
     this.logger = options.logger ?? new NullLogger();
     this.jobName = options.jobName;
