@@ -210,10 +210,10 @@
 
 - [x] Core Types定義
 - [x] Fetcher/Planner/Reconciler の基本実装
-- [x] Notion Provider（メタデータ取得・コンテンツダウンロード）
-- [x] Dify Provider（CRUD操作）
-- [x] 基本的なCLI
-- [x] ドライランモード
+- [ ] Notion Provider（メタデータ取得・コンテンツダウンロード）
+- [ ] Dify Provider（CRUD操作）
+- [ ] 基本的なCLI
+- [ ] ドライランモード
 
 ### Phase 1.1（次フェーズ）
 
@@ -250,6 +250,40 @@
 - Step 3: 1時間（Core Engine）
 - Step 4-5: 1.75時間（Provider実装）
 - Step 6-8: 1.5時間（CLI・テスト）
+
+## 実装済み機能（2025-01-19）
+
+### Core Engine実装
+
+- ✅ Zodによる型安全なスキーマ定義
+- ✅ Fetcher Layer: メタデータ取得の抽象化（AsyncIterator対応）
+- ✅ Planner Layer: 純粋関数による同期計画生成
+- ✅ Reconciler Layer: SyncPlanに基づく実行とクリーンアップ
+- ✅ ETL Engine: 全体のフロー制御
+
+### テスト
+
+- ✅ Plannerの包括的なユニットテスト（100%カバレッジ）
+  - create/update/delete/skipの全ケース
+  - 混合ケースのテスト
+  - エッジケースの考慮
+
+### 次のステップ
+
+1. **Notion Provider実装**
+   - Notionクライアント初期化
+   - AsyncIteratorによるページネーション対応
+   - Notionブロック→Markdown変換
+2. **Dify Provider実装**
+   - APIクライアント初期化
+   - CRUD操作の実装
+   - ファイルアップロード処理
+
+3. **CLI/設定管理**
+   - CLIパーサー実装
+   - YAML設定ファイル読み込み
+   - 環境変数展開
+   - 構造化ロガー（Winston）設定
 
 ## 成功基準
 
