@@ -71,14 +71,15 @@ flowchart TB
    - バリデーション
 
 2. **Fetcher Layer** (I/O層)
-   - Data Sourceから現在のドキュメントのメタデータ一覧を取得
-   - Knowledge Providerから現在のドキュメントのメタデータ一覧を取得
+   - 全Data Sourceから現在のドキュメントのメタデータ一覧を取得（Desired State）
+   - 各Knowledge Providerから個別にメタデータ一覧を取得（各々のCurrent State）
    - **文書本体は取得せず**、メタデータ（ID、最終更新日時）のみ取得
 
 3. **Planner Layer** (純粋関数層)
-   - 両側のメタデータ一覧を突合
-   - **メタデータのみで**実行計画（SyncPlan）を生成
+   - Desired State（Sources）と各Current State（Target）を突合
+   - **メタデータのみで**Target毎の実行計画（SyncPlan）を生成
    - 最終更新日時の比較により操作を決定: create, update, delete, skip
+   - **各Targetは独立して処理**されるため、同じソースでもTargetによって異なるプランが生成される
 
 4. **Reconciler Layer** (I/O層)
    - SyncPlanに基づいて実際の操作を実行
@@ -200,11 +201,15 @@ interface KnowledgeProvider {
 
 // DocumentMetadata型定義（これのみを使用、contentは扱わない）
 interface DocumentMetadata {
-  id: string; // 一意識別子（format: <provider-id>:<original-id>）
-  sourceId: string; // ソース側の元ID（プロバイダー固有のID）
   providerId: string; // Data Source Provider ID（例: 'notion', 'google-drive'）
+  sourceId: string; // ソース側の元ID（プロバイダー固有のID）
   title: string;
   lastModified: Date; // 更新判定に使用（これが同期の要）
+}
+
+// ヘルパー関数
+function getDocumentId(metadata: DocumentMetadata): string {
+  return `${metadata.providerId}:${metadata.sourceId}`;
 }
 
 // 一時ファイル処理用の型
@@ -255,7 +260,7 @@ interface Config {
   };
 
   // 同期ジョブの定義（Job IDをキーとするマップ）
-  syncJobs: Record<string, SyncJobConfig>;
+  jobs: Record<string, JobConfig>;
 
   // グローバルオプション
   options?: {
@@ -263,7 +268,7 @@ interface Config {
   };
 }
 
-interface SyncJobConfig {
+interface JobConfig {
   name?: string; // ジョブの説明（省略時はJob IDを使用）
   sources: string[] | SourceConfig[]; // プロバイダーIDの参照、またはインライン定義
   targets: string[] | TargetConfig[]; // プロバイダーIDの参照、またはインライン定義
@@ -506,7 +511,7 @@ class ETLEngine {
 
   async execute(config: Config, jobIds?: string[]): Promise<void> {
     // 実行するジョブを決定
-    const jobsToRun = this.selectJobs(config.syncJobs, jobIds);
+    const jobsToRun = this.selectJobs(config.jobs, jobIds);
 
     // 各ジョブを実行
     for (const [jobId, jobConfig] of Object.entries(jobsToRun)) {
@@ -524,7 +529,7 @@ class ETLEngine {
 
   private async executeJob(
     jobId: string,
-    jobConfig: SyncJobConfig,
+    jobConfig: JobConfig,
     globalConfig: Config,
   ): Promise<void> {
     // 1. ソースプロバイダーの初期化と取得
@@ -712,7 +717,7 @@ dok --help
 
 ```yaml
 # config-simple.yaml
-syncJobs:
+jobs:
   notion-to-dify:
     sources:
       - provider: NotionProvider
@@ -778,7 +783,7 @@ providers:
         index_name: ${PINECONE_INDEX_NAME}
 
 # 同期ジョブの定義
-syncJobs:
+jobs:
   # 営業部: 複数ソース → 複数ターゲット
   sales-knowledge-sync:
     name: "営業部ナレッジ同期"
