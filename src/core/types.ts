@@ -40,7 +40,7 @@ export type SyncPlan = z.infer<typeof SyncPlanSchema>;
 export interface DataSourceProvider {
   providerId: string;
   initialize(config: Record<string, unknown>): Promise<void>;
-  fetchDocumentsMetadata(): AsyncIterable<DocumentMetadata> | Promise<DocumentMetadata[]>;
+  fetchDocumentsMetadata(): Promise<DocumentMetadata[]>;
   downloadDocumentContent(documentId: string): Promise<string>;
 }
 

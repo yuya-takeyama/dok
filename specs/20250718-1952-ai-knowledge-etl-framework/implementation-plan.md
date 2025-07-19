@@ -126,7 +126,7 @@
    - データベースID設定
 
 2. **メタデータ取得**
-   - AsyncIteratorによるページネーション対応
+   - ページネーション対応（通常のPromiseベース）
    - ID形式: `notion:<page_id>`
    - 最終更新日時の取得
 
@@ -256,7 +256,7 @@
 ### Core Engine実装
 
 - ✅ Zodによる型安全なスキーマ定義
-- ✅ Fetcher Layer: メタデータ取得の抽象化（AsyncIterator対応）
+- ✅ Fetcher Layer: メタデータ取得の抽象化
 - ✅ Planner Layer: 純粋関数による同期計画生成
 - ✅ Reconciler Layer: SyncPlanに基づく実行とクリーンアップ
 - ✅ ETL Engine: 全体のフロー制御
@@ -272,7 +272,7 @@
 
 1. **Notion Provider実装**
    - Notionクライアント初期化
-   - AsyncIteratorによるページネーション対応
+   - ページネーション対応（通常のPromiseベース）
    - Notionブロック→Markdown変換
 2. **Dify Provider実装**
    - APIクライアント初期化
