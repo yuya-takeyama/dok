@@ -1,11 +1,7 @@
-import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { type TempFileManager, TempFileManagerImpl } from "../utils/tempfile.js";
 import { type Logger, NullLogger } from "./logger";
 import {
   type DataSourceProvider,
-  extractExtensionFromSourceId,
   getDocumentId,
   type KnowledgeProvider,
   type SyncPlan,
@@ -16,13 +12,25 @@ export interface ReconcilerOptions {
   logger?: Logger;
 }
 
+export interface SourceProviderConfig {
+  providerId: string;
+  provider: string;
+  config: unknown;
+}
+
+type DataSourceProviderConstructor = new (
+  config: unknown,
+  tempFileManager: TempFileManager,
+) => DataSourceProvider;
+
 export class Reconciler {
   private readonly logger: Logger;
   private readonly dryRun: boolean;
 
   constructor(
-    private sourceProviders: Map<string, DataSourceProvider>,
+    private sourceProviderConfigs: Map<string, SourceProviderConfig>,
     private targetProvider: KnowledgeProvider,
+    private providerConstructors: Map<string, DataSourceProviderConstructor>,
     options: ReconcilerOptions = {},
   ) {
     this.logger = options.logger ?? new NullLogger();
@@ -35,11 +43,23 @@ export class Reconciler {
       summary: plan.summary,
     });
 
-    // Create temporary directory for downloads
-    const tempDir = await mkdtemp(join(tmpdir(), "dok-"));
+    const tempFileManager = new TempFileManagerImpl();
     const errors: Array<{ operation: (typeof plan.operations)[0]; error: Error }> = [];
 
     try {
+      // Create provider instances with TempFileManager injection
+      const sourceProviders = new Map<string, DataSourceProvider>();
+
+      for (const [providerId, providerConfig] of this.sourceProviderConfigs) {
+        const ProviderConstructor = this.providerConstructors.get(providerConfig.provider);
+        if (!ProviderConstructor) {
+          throw new Error(`Provider constructor not found: ${providerConfig.provider}`);
+        }
+
+        const provider = new ProviderConstructor(providerConfig.config, tempFileManager);
+        sourceProviders.set(providerId, provider);
+      }
+
       for (const operation of plan.operations) {
         const { type, documentMetadata, reason } = operation;
 
@@ -58,38 +78,16 @@ export class Reconciler {
           switch (type) {
             case "create":
             case "update": {
-              // Download content from source
-              const sourceProvider = this.sourceProviders.get(documentMetadata.providerId);
+              // Get source provider and download content
+              const sourceProvider = sourceProviders.get(documentMetadata.providerId);
               if (!sourceProvider) {
                 throw new Error(`Source provider not found: ${documentMetadata.providerId}`);
               }
 
-              const content = await sourceProvider.downloadDocumentContent(
+              // Provider returns temp file path directly
+              const tempFilePath = await sourceProvider.downloadDocumentContent(
                 getDocumentId(documentMetadata),
               );
-
-              // Get file extension from metadata or sourceId
-              let fileExtension = documentMetadata.fileExtension;
-              if (!fileExtension) {
-                // Try to get from provider if available
-                if (sourceProvider.getFileExtension) {
-                  fileExtension =
-                    (await sourceProvider.getFileExtension(getDocumentId(documentMetadata))) ||
-                    undefined;
-                }
-                // If still not available, try to extract from sourceId
-                if (!fileExtension) {
-                  fileExtension = extractExtensionFromSourceId(documentMetadata.sourceId) || "md";
-                }
-              }
-
-              // Generate safe filename using SHA256 hash with appropriate extension
-              const hash = createHash("sha256")
-                .update(getDocumentId(documentMetadata))
-                .digest("hex");
-              const tempFilePath = join(tempDir, `${hash}.${fileExtension}`);
-
-              await writeFile(tempFilePath, content, "utf-8");
 
               // Create or update in target
               if (type === "create") {
@@ -148,8 +146,8 @@ export class Reconciler {
         });
       }
     } finally {
-      // Clean up temporary directory
-      await rm(tempDir, { recursive: true, force: true });
+      // Clean up all temporary files
+      await tempFileManager.cleanup();
     }
   }
 }

@@ -1,9 +1,7 @@
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
 import { Client } from "@notionhq/client";
 import { NotionToMarkdown } from "notion-to-md";
 import type { DataSourceProvider, DocumentMetadata } from "../../core/types.js";
+import type { TempFileManager } from "../../utils/tempfile.js";
 
 export interface NotionProviderConfig {
   apiKey: string;
@@ -16,7 +14,10 @@ export class NotionProvider implements DataSourceProvider {
   private n2m: NotionToMarkdown;
   private databaseId: string;
 
-  constructor(config: NotionProviderConfig) {
+  constructor(
+    config: NotionProviderConfig,
+    private tempFileManager: TempFileManager,
+  ) {
     this.client = new Client({
       auth: config.apiKey,
     });
@@ -65,14 +66,18 @@ export class NotionProvider implements DataSourceProvider {
       const mdString = this.n2m.toMarkdownString(mdblocks);
       const content = mdString.parent || "";
 
-      // Save to temporary file
-      const tempDir = os.tmpdir();
-      const tempFileName = `${this.providerId}_${pageId}_${Date.now()}.md`;
-      const tempPath = path.join(tempDir, tempFileName);
+      // Get metadata for the document
+      const page = await this.client.pages.retrieve({ page_id: pageId });
+      const metadata: DocumentMetadata = {
+        providerId: this.providerId,
+        sourceId: pageId,
+        title: "properties" in page ? this.extractTitle(page.properties) : "Untitled",
+        lastModified: "last_edited_time" in page ? new Date(page.last_edited_time) : new Date(),
+        fileExtension: "md",
+      };
 
-      await fs.writeFile(tempPath, content, "utf-8");
-
-      return tempPath; // Return file path instead of content
+      // Create temp file using TempFileManager
+      return this.tempFileManager.createTempFile(metadata, content);
     } catch (error) {
       // Handle errors (e.g., unsupported blocks, permissions)
       console.error(
@@ -80,12 +85,16 @@ export class NotionProvider implements DataSourceProvider {
         error instanceof Error ? error.message : String(error),
       );
 
-      // Return empty file path on error
-      const tempDir = os.tmpdir();
-      const tempFileName = `${this.providerId}_${pageId}_${Date.now()}_empty.md`;
-      const tempPath = path.join(tempDir, tempFileName);
-      await fs.writeFile(tempPath, "", "utf-8");
-      return tempPath;
+      // Create empty file on error
+      const metadata: DocumentMetadata = {
+        providerId: this.providerId,
+        sourceId: pageId,
+        title: "Error",
+        lastModified: new Date(),
+        fileExtension: "md",
+      };
+
+      return this.tempFileManager.createTempFile(metadata, "");
     }
   }
 

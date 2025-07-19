@@ -1,8 +1,14 @@
+import { type TempFileManager, TempFileManagerImpl } from "../utils/tempfile.js";
 import { createSyncPlan } from "./createSyncPlan";
 import { Fetcher } from "./fetcher";
 import { type Logger, NullLogger } from "./logger";
-import { Reconciler, type ReconcilerOptions } from "./reconciler";
+import { Reconciler, type ReconcilerOptions, type SourceProviderConfig } from "./reconciler";
 import type { DataSourceProvider, KnowledgeProvider } from "./types";
+
+type DataSourceProviderConstructor = new (
+  config: unknown,
+  tempFileManager: TempFileManager,
+) => DataSourceProvider;
 
 export interface EngineOptions extends ReconcilerOptions {
   jobName?: string;
@@ -10,24 +16,40 @@ export interface EngineOptions extends ReconcilerOptions {
 
 export class Engine {
   private fetcher: Fetcher;
-  private sourceProviderMap: Map<string, DataSourceProvider>;
+  private sourceProviderConfigs: Map<string, SourceProviderConfig>;
+  private providerConstructors: Map<string, DataSourceProviderConstructor>;
   private readonly logger: Logger;
   private readonly jobName?: string;
 
   constructor(
-    sourceProviders: DataSourceProvider[],
+    sourceProviderConfigs: SourceProviderConfig[],
     private readonly targetProviders: KnowledgeProvider[],
+    providerConstructors: Map<string, DataSourceProviderConstructor>,
     private readonly options: EngineOptions = {},
   ) {
     this.logger = options.logger ?? new NullLogger();
     this.jobName = options.jobName;
-    this.fetcher = new Fetcher(sourceProviders);
+    this.providerConstructors = providerConstructors;
 
-    // Create a map of source providers for reconciler
-    this.sourceProviderMap = new Map<string, DataSourceProvider>();
-    for (const provider of sourceProviders) {
-      this.sourceProviderMap.set(provider.providerId, provider);
+    // Create map of source provider configs
+    this.sourceProviderConfigs = new Map<string, SourceProviderConfig>();
+    for (const config of sourceProviderConfigs) {
+      this.sourceProviderConfigs.set(config.providerId, config);
     }
+
+    // Create source providers with temporary TempFileManager for fetching metadata
+    const tempFileManager = new TempFileManagerImpl();
+    const sourceProviders: DataSourceProvider[] = [];
+    for (const config of sourceProviderConfigs) {
+      const ProviderConstructor = this.providerConstructors.get(config.provider);
+      if (!ProviderConstructor) {
+        throw new Error(`Provider constructor not found: ${config.provider}`);
+      }
+      const provider = new ProviderConstructor(config.config, tempFileManager);
+      sourceProviders.push(provider);
+    }
+
+    this.fetcher = new Fetcher(sourceProviders);
   }
 
   async run(): Promise<void> {
@@ -61,10 +83,15 @@ export class Engine {
       });
 
       // Execute sync plan for this target
-      const reconciler = new Reconciler(this.sourceProviderMap, targetProvider, {
-        logger: this.logger,
-        dryRun: this.options?.dryRun,
-      });
+      const reconciler = new Reconciler(
+        this.sourceProviderConfigs,
+        targetProvider,
+        this.providerConstructors,
+        {
+          logger: this.logger,
+          dryRun: this.options?.dryRun,
+        },
+      );
       await reconciler.execute(plan);
     }
 
