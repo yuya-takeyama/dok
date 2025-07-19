@@ -11,7 +11,7 @@
 
 ## 実装ステップ
 
-### Step 1: プロジェクトセットアップ（30分）
+### Step 1: プロジェクトセットアップ（30分）【完了】
 
 1. **プロジェクト初期化**
    - `pnpm init`
@@ -35,17 +35,21 @@
    - `.prettierrc`
    - `.gitignore`
 
-### Step 2: Core Types とインターフェース定義（45分）
+### Step 2: Core Types とインターフェース定義（45分）【完了】
 
 1. **基本型定義** (`src/core/types.ts`)
 
    ```typescript
    interface DocumentMetadata {
-     id: string; // format: <provider-id>:<original-id>
-     sourceId: string;
-     providerId: string;
+     providerId: string; // Data Source Provider ID
+     sourceId: string; // ソース側の元ID
      title: string;
      lastModified: Date;
+   }
+
+   // ヘルパー関数
+   function getDocumentId(metadata: DocumentMetadata): string {
+     return `${metadata.providerId}:${metadata.sourceId}`;
    }
 
    interface SyncOperation {
@@ -95,15 +99,15 @@
 
 3. **設定型定義** (`src/config/schema.ts`)
    - Zodによる設定スキーマ定義
-   - 新しいsyncJobsベースの設定構造
+   - 新しいjobsベースの設定構造
 
-### Step 3: Core Engine 実装（60分）
+### Step 3: Core Engine 実装（60分）【完了】
 
 1. **Fetcher Layer** (`src/core/fetcher.ts`)
    - メタデータ取得の抽象化
    - Provider間の差異を吸収
 
-2. **Planner Layer** (`src/core/planner.ts`)
+2. **Planner Layer** (`src/core/createSyncPlan.ts`)
    - 純粋関数として実装
    - メタデータのみで同期計画を生成
    - create/update/delete/skip の判定ロジック
@@ -114,7 +118,7 @@
    - 一時ファイル管理
    - エラーハンドリングとクリーンアップ
 
-4. **ETL Engine** (`src/core/engine.ts`)
+4. **Engine** (`src/core/engine.ts`)
    - 全体の実行フロー制御
    - ジョブ管理
    - ドライランモード対応
@@ -126,7 +130,7 @@
    - データベースID設定
 
 2. **メタデータ取得**
-   - AsyncIteratorによるページネーション対応
+   - ページネーション対応（通常のPromiseベース）
    - ID形式: `notion:<page_id>`
    - 最終更新日時の取得
 
@@ -186,15 +190,14 @@
 2. **設定ファイル作成**
 
    ```yaml
-   syncJobs:
+   jobs:
      notion-to-dify:
        sources:
-         - provider: NotionProvider
-           providerId: notion
+         - provider: notion
            config:
              database_id: ${NOTION_DATABASE_ID}
        targets:
-         - provider: DifyProvider
+         - provider: dify
            config:
              dataset_id: ${DIFY_DATASET_ID}
    ```
@@ -210,10 +213,10 @@
 
 - [x] Core Types定義
 - [x] Fetcher/Planner/Reconciler の基本実装
-- [x] Notion Provider（メタデータ取得・コンテンツダウンロード）
-- [x] Dify Provider（CRUD操作）
-- [x] 基本的なCLI
-- [x] ドライランモード
+- [ ] Notion Provider（メタデータ取得・コンテンツダウンロード）
+- [ ] Dify Provider（CRUD操作）
+- [ ] 基本的なCLI
+- [ ] ドライランモード
 
 ### Phase 1.1（次フェーズ）
 
@@ -250,6 +253,43 @@
 - Step 3: 1時間（Core Engine）
 - Step 4-5: 1.75時間（Provider実装）
 - Step 6-8: 1.5時間（CLI・テスト）
+
+## 実装済み機能（2025-07-19）
+
+### Core Engine実装
+
+- ✅ Zodによる型安全なスキーマ定義
+- ✅ Fetcher Layer: メタデータ取得の抽象化
+- ✅ Planner Layer: 純粋関数による同期計画生成
+- ✅ Reconciler Layer: SyncPlanに基づく実行とクリーンアップ
+  - 単一のtargetProviderを扱うように簡略化（Single Responsibility Principle）
+  - Engineレベルで各ターゲットに対して個別にReconcilerを実行
+- ✅ Engine: 全体のフロー制御
+  - 各ターゲットに対して独立した同期プランを生成・実行
+
+### テスト
+
+- ✅ Plannerの包括的なユニットテスト（100%カバレッジ）
+  - create/update/delete/skipの全ケース
+  - 混合ケースのテスト
+  - エッジケースの考慮
+
+### 次のステップ
+
+1. **Notion Provider実装**
+   - Notionクライアント初期化
+   - ページネーション対応（通常のPromiseベース）
+   - Notionブロック→Markdown変換
+2. **Dify Provider実装**
+   - APIクライアント初期化
+   - CRUD操作の実装
+   - ファイルアップロード処理
+
+3. **CLI/設定管理**
+   - CLIパーサー実装
+   - YAML設定ファイル読み込み
+   - 環境変数展開
+   - 構造化ロガー（Winston）設定
 
 ## 成功基準
 

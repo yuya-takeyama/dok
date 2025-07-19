@@ -8,6 +8,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --unsafe .",
+    "lint:fix": "biome check --write --unsafe .",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "all": "pnpm typecheck && pnpm lint && pnpm format && pnpm test"
@@ -24,5 +25,12 @@
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@notionhq/client": "^4.0.1",
+    "form-data": "^4.0.4",
+    "winston": "^3.17.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.0.5"
   }
 }
