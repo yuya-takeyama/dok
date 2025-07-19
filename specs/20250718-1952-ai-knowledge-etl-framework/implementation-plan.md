@@ -213,7 +213,7 @@
 
 - [x] Core Types定義
 - [x] Fetcher/Planner/Reconciler の基本実装
-- [ ] Notion Provider（メタデータ取得・コンテンツダウンロード）
+- [x] Notion Provider（メタデータ取得・コンテンツダウンロード）
 - [ ] Dify Provider（CRUD操作）
 - [ ] 基本的なCLI
 - [ ] ドライランモード
@@ -266,6 +266,19 @@
   - Engineレベルで各ターゲットに対して個別にReconcilerを実行
 - ✅ Engine: 全体のフロー制御
   - 各ターゲットに対して独立した同期プランを生成・実行
+- ✅ TempFileManager: 一時ファイル管理の統一化
+  - SHA256ハッシュベースの安全なファイル名生成
+  - 自動クリーンアップによるメモリリーク防止
+  - Constructor Injectionによる依存性注入
+
+### Provider実装
+
+- ✅ Notion Provider実装完了
+  - Notionデータベースからのメタデータ取得（ページネーション対応）
+  - notion-to-mdによるMarkdown変換
+  - 多言語対応のタイトル抽出
+  - 構造化ロギング対応
+  - エラー時の適切な例外処理（冪等性保証）
 
 ### テスト
 
@@ -273,13 +286,13 @@
   - create/update/delete/skipの全ケース
   - 混合ケースのテスト
   - エッジケースの考慮
+- ✅ types.tsユーティリティ関数のテスト（100%カバレッジ）
+  - getDocumentId, parseDocumentId, extractExtensionFromSourceId
+  - エッジケースを含む包括的なテスト
 
 ### 次のステップ
 
-1. **Notion Provider実装**
-   - Notionクライアント初期化
-   - ページネーション対応（通常のPromiseベース）
-   - Notionブロック→Markdown変換
+1. ~~**Notion Provider実装**~~ ✅ 完了
 2. **Dify Provider実装**
    - APIクライアント初期化
    - CRUD操作の実装

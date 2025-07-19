@@ -59,7 +59,7 @@ export function extractExtensionFromSourceId(sourceId: string): string | null {
 export interface DataSourceProvider {
   providerId: string;
   fetchDocumentsMetadata(): Promise<DocumentMetadata[]>;
-  downloadDocumentContent(documentId: string): Promise<string>;
+  downloadDocumentContent(documentId: string): Promise<string>; // Returns temporary file path
   getFileExtension?(documentId: string): Promise<string | null>; // Optional method to get file extension
 }
 
