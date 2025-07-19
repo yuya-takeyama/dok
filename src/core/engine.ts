@@ -61,7 +61,7 @@ export class Engine {
       });
 
       // Execute sync plan for this target
-      const reconciler = new Reconciler(this.sourceProviderMap, [targetProvider], {
+      const reconciler = new Reconciler(this.sourceProviderMap, targetProvider, {
         logger: this.logger,
         dryRun: this.options?.dryRun,
       });

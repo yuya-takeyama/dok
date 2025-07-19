@@ -20,7 +20,7 @@ export class Reconciler {
 
   constructor(
     private sourceProviders: Map<string, DataSourceProvider>,
-    private targetProviders: KnowledgeProvider[],
+    private targetProvider: KnowledgeProvider,
     options: ReconcilerOptions = {},
   ) {
     this.logger = options.logger ?? new NullLogger();
@@ -70,21 +70,17 @@ export class Reconciler {
             await writeFile(tempFilePath, content, "utf-8");
 
             // Create or update in target
-            for (const targetProvider of this.targetProviders) {
-              if (type === "create") {
-                await targetProvider.createDocumentFromFile(documentMetadata, tempFilePath);
-              } else {
-                await targetProvider.updateDocumentFromFile(documentMetadata, tempFilePath);
-              }
+            if (type === "create") {
+              await this.targetProvider.createDocumentFromFile(documentMetadata, tempFilePath);
+            } else {
+              await this.targetProvider.updateDocumentFromFile(documentMetadata, tempFilePath);
             }
             break;
           }
 
           case "delete": {
             // Delete from target
-            for (const targetProvider of this.targetProviders) {
-              await targetProvider.deleteDocument(getDocumentId(documentMetadata));
-            }
+            await this.targetProvider.deleteDocument(getDocumentId(documentMetadata));
             break;
           }
 
