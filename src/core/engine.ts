@@ -1,6 +1,6 @@
+import { createSyncPlan } from "./createSyncPlan";
 import { Fetcher } from "./fetcher";
 import { type Logger, NullLogger } from "./logger";
-import { createSyncPlan } from "./createSyncPlan";
 import { Reconciler, type ReconcilerOptions } from "./reconciler";
 import type { DataSourceProvider, KnowledgeProvider } from "./types";
 

@@ -144,7 +144,7 @@ describe("createSyncPlan", () => {
   });
 
   it("should handle empty inputs", () => {
-    const result = createPlan([], []);
+    const result = createSyncPlan([], []);
 
     expect(result.operations).toHaveLength(0);
     expect(result.summary).toEqual({
