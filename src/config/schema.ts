@@ -4,7 +4,7 @@ import { z } from "zod";
 export const ProviderConfigSchema = z.object({
   provider: z.string(),
   providerId: z.string().optional(),
-  config: z.record(z.any()),
+  config: z.record(z.string(), z.any()),
 });
 
 export const SyncJobSchema = z.object({
@@ -13,7 +13,7 @@ export const SyncJobSchema = z.object({
 });
 
 export const ConfigSchema = z.object({
-  syncJobs: z.record(SyncJobSchema),
+  syncJobs: z.record(z.string(), SyncJobSchema),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

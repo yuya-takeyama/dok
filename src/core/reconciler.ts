@@ -6,8 +6,8 @@ import type { DataSourceProvider, KnowledgeProvider, SyncPlan } from "./types";
 export interface ReconcilerOptions {
   dryRun?: boolean;
   logger?: {
-    info: (message: string, meta?: Record<string, any>) => void;
-    error: (message: string, meta?: Record<string, any>) => void;
+    info: (message: string, meta?: Record<string, unknown>) => void;
+    error: (message: string, meta?: Record<string, unknown>) => void;
   };
 }
 

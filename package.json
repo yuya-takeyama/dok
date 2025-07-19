@@ -8,6 +8,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --unsafe .",
+    "lint:fix": "biome check --write --unsafe .",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "all": "pnpm typecheck && pnpm lint && pnpm format && pnpm test"

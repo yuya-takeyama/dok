@@ -13,12 +13,12 @@ export class Fetcher {
       const result = await provider.fetchDocumentsMetadata();
 
       // Handle both AsyncIterator and Promise<DocumentMetadata[]>
-      if (Symbol.asyncIterator in result) {
+      if (result && typeof result === "object" && Symbol.asyncIterator in result) {
         for await (const metadata of result) {
           allMetadata.push(metadata);
         }
       } else {
-        allMetadata.push(...(await result));
+        allMetadata.push(...(result as DocumentMetadata[]));
       }
     }
 

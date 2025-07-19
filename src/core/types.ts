@@ -39,13 +39,13 @@ export type SyncPlan = z.infer<typeof SyncPlanSchema>;
 // Provider interfaces (these can't be zodified directly, but we can use zod for their configs)
 export interface DataSourceProvider {
   providerId: string;
-  initialize(config: Record<string, any>): Promise<void>;
-  fetchDocumentsMetadata(): AsyncIterator<DocumentMetadata> | Promise<DocumentMetadata[]>;
+  initialize(config: Record<string, unknown>): Promise<void>;
+  fetchDocumentsMetadata(): AsyncIterable<DocumentMetadata> | Promise<DocumentMetadata[]>;
   downloadDocumentContent(documentId: string): Promise<string>;
 }
 
 export interface KnowledgeProvider {
-  initialize(config: Record<string, any>): Promise<void>;
+  initialize(config: Record<string, unknown>): Promise<void>;
   fetchDocumentsMetadata(): Promise<DocumentMetadata[]>;
   createDocumentFromFile(metadata: DocumentMetadata, filePath: string): Promise<void>;
   updateDocumentFromFile(metadata: DocumentMetadata, filePath: string): Promise<void>;

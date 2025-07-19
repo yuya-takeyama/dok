@@ -1,7 +1,7 @@
-import type { DataSourceProvider, KnowledgeProvider } from "./types";
 import { Fetcher } from "./fetcher";
 import { Planner } from "./planner";
 import { Reconciler, type ReconcilerOptions } from "./reconciler";
+import type { DataSourceProvider, KnowledgeProvider } from "./types";
 
 export interface EngineOptions extends ReconcilerOptions {
   jobName?: string;
