@@ -1,11 +1,13 @@
 import { Client } from "@notionhq/client";
 import { NotionToMarkdown } from "notion-to-md";
+import { type Logger, NullLogger } from "../../core/logger.js";
 import type { DataSourceProvider, DocumentMetadata } from "../../core/types.js";
 import type { TempFileManager } from "../../utils/tempfile.js";
 
 export interface NotionProviderConfig {
   apiKey: string;
   databaseId: string;
+  logger?: Logger;
 }
 
 export class NotionProvider implements DataSourceProvider {
@@ -13,6 +15,7 @@ export class NotionProvider implements DataSourceProvider {
   private client: Client;
   private n2m: NotionToMarkdown;
   private databaseId: string;
+  private logger: Logger;
 
   constructor(
     config: NotionProviderConfig,
@@ -23,6 +26,7 @@ export class NotionProvider implements DataSourceProvider {
     });
     this.n2m = new NotionToMarkdown({ notionClient: this.client });
     this.databaseId = config.databaseId;
+    this.logger = config.logger ?? new NullLogger();
   }
 
   async fetchDocumentsMetadata(): Promise<DocumentMetadata[]> {
@@ -80,21 +84,17 @@ export class NotionProvider implements DataSourceProvider {
       return this.tempFileManager.createTempFile(metadata, content);
     } catch (error) {
       // Handle errors (e.g., unsupported blocks, permissions)
-      console.error(
-        `Failed to convert page ${pageId} to markdown:`,
-        error instanceof Error ? error.message : String(error),
+      this.logger.error(`Failed to convert page ${pageId} to markdown`, {
+        pageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Re-throw error to let Reconciler handle it
+      throw new Error(
+        `Failed to download content from Notion page ${pageId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
-
-      // Create empty file on error
-      const metadata: DocumentMetadata = {
-        providerId: this.providerId,
-        sourceId: pageId,
-        title: "Error",
-        lastModified: new Date(),
-        fileExtension: "md",
-      };
-
-      return this.tempFileManager.createTempFile(metadata, "");
     }
   }
 
