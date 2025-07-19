@@ -30,12 +30,12 @@
 
 ```mermaid
 flowchart TB
-    subgraph DS[Data Sources]
+    subgraph DS["Data Sources"]
         Notion["Notion<br/>ID: notion:page_id"]
         Future1["Future:<br/>Google Drive / GitHub"]
     end
 
-    subgraph Core[Sync Engine]
+    subgraph Core["Sync Engine"]
         Fetcher["Fetcher<br/>メタデータ取得"]
         Planner["Planner<br/>差分計算（純粋関数）"]
         Reconciler["Reconciler<br/>同期実行"]
@@ -44,7 +44,7 @@ flowchart TB
         Planner -->|"sync plan"| Reconciler
     end
 
-    subgraph KB[Knowledge Bases]
+    subgraph KB["Knowledge Bases"]
         Dify["Dify<br/>Dataset API"]
         Future2["Future:<br/>Other KBs"]
     end
@@ -54,13 +54,11 @@ flowchart TB
     DS -->|"download content"| Reconciler
     Reconciler -->|"upload content"| KB
 
-    classDef dataSource fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef core fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef knowledge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-
-    class Notion,Future1 dataSource
-    class Fetcher,Planner,Reconciler core
-    class Dify,Future2 knowledge
+    %% シンプルなスタイル定義
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
+    classDef dataSource fill:#fff,stroke:#666,stroke-width:2px,color:#000
+    classDef core fill:#fff,stroke:#666,stroke-width:2px,color:#000
+    classDef knowledge fill:#fff,stroke:#666,stroke-width:2px,color:#000
 ```
 
 ### 2.2 コンポーネント設計
