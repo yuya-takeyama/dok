@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read fp; case \"$fp\" in *.md|*.yml|*.yaml|*.json) npx prettier --write \"$fp\" ;; *.ts|*.js) npx @biomejs/biome format --write \"$fp\" ;; esac; }"
+          }
+        ]
+      }
+    ]
+  }
+}

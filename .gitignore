@@ -1,3 +1,7 @@
+# Claude specific
+**/settings.local.json
+CLAUDE.local.md
+
 # Logs
 logs
 *.log
