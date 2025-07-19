@@ -67,7 +67,7 @@ export class NotionProvider implements DataSourceProvider {
 
       // Save to temporary file
       const tempDir = os.tmpdir();
-      const tempFileName = `notion_${pageId}_${Date.now()}.md`;
+      const tempFileName = `${this.providerId}_${pageId}_${Date.now()}.md`;
       const tempPath = path.join(tempDir, tempFileName);
 
       await fs.writeFile(tempPath, content, "utf-8");
@@ -82,7 +82,7 @@ export class NotionProvider implements DataSourceProvider {
 
       // Return empty file path on error
       const tempDir = os.tmpdir();
-      const tempFileName = `notion_${pageId}_${Date.now()}_empty.md`;
+      const tempFileName = `${this.providerId}_${pageId}_${Date.now()}_empty.md`;
       const tempPath = path.join(tempDir, tempFileName);
       await fs.writeFile(tempPath, "", "utf-8");
       return tempPath;
