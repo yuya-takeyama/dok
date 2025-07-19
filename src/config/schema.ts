@@ -7,15 +7,15 @@ export const ProviderConfigSchema = z.object({
   config: z.record(z.string(), z.any()),
 });
 
-export const SyncJobSchema = z.object({
+export const JobSchema = z.object({
   sources: z.array(ProviderConfigSchema),
   targets: z.array(ProviderConfigSchema),
 });
 
 export const ConfigSchema = z.object({
-  syncJobs: z.record(z.string(), SyncJobSchema),
+  jobs: z.record(z.string(), JobSchema),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
-export type SyncJob = z.infer<typeof SyncJobSchema>;
+export type Job = z.infer<typeof JobSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;

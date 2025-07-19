@@ -95,7 +95,7 @@
 
 3. **設定型定義** (`src/config/schema.ts`)
    - Zodによる設定スキーマ定義
-   - 新しいsyncJobsベースの設定構造
+   - 新しいjobsベースの設定構造
 
 ### Step 3: Core Engine 実装（60分）
 
@@ -186,7 +186,7 @@
 2. **設定ファイル作成**
 
    ```yaml
-   syncJobs:
+   jobs:
      notion-to-dify:
        sources:
          - provider: NotionProvider
