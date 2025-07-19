@@ -22,6 +22,7 @@
 - **計画と実行の分離**: 同期計画の生成時には文書内容を扱わず、実行時にのみ必要な文書を処理
 - **遅延ダウンロード**: 実際にcreate/updateが必要な文書のみ、実行時に取得・変換
 - **プロバイダー固有の処理**: NotionのようにMarkdown変換が必要な場合も、Reconciler実行時にのみ処理
+- **一時ファイル管理の一元化**: TempFileManagerによる統一的な一時ファイル管理とクリーンアップ
 - **自動クリーンアップ**: 処理完了後、一時ファイルを自動削除
 
 ## 2. アーキテクチャ概要
@@ -86,6 +87,7 @@ flowchart TB
    - **単一のターゲットプロバイダーに対して操作を実行**（Single Responsibility Principle）
    - **create/update対象の文書のみ**、実行時に取得・処理
    - **プロバイダー固有の実装**: Notionはblocks→Markdown変換、Google Driveは直接ファイル取得など
+   - **TempFileManagerの管理**: ProviderへのDIとライフサイクル管理
    - エラーハンドリングとリトライ
    - 一時ファイルの自動クリーンアップ
    - 進捗状況の追跡
@@ -99,6 +101,12 @@ flowchart TB
 6. **Provider実装**
    - NotionとDifyの直接実装
    - ID管理とメタデータ追跡
+
+7. **TempFileManager** (一時ファイル管理層)
+   - 統一的な一時ファイル作成・管理
+   - ProviderへのDependency Injection
+   - 自動クリーンアップの保証
+   - メモリ効率的なファイル処理
 
 ## 3. 同期戦略
 
@@ -182,6 +190,17 @@ dok/
 ### 5.1 Core Types
 
 ```typescript
+// 一時ファイル管理インターフェース
+interface TempFileManager {
+  createTempFile(
+    metadata: DocumentMetadata,
+    content: string | Buffer,
+    extension?: string, // 省略時はmetadata.fileExtensionを使用
+  ): Promise<string>; // ファイルパスを返す
+
+  cleanup(): Promise<void>; // 全ての一時ファイルをクリーンアップ
+}
+
 // Provider共通インターフェース
 interface DataSourceProvider {
   providerId: string;
@@ -190,6 +209,11 @@ interface DataSourceProvider {
     | AsyncIterator<DocumentMetadata>
     | Promise<DocumentMetadata[]>;
   downloadDocumentContent(documentId: string): Promise<string>; // 一時ファイルパスを返す
+}
+
+// Constructor Injectionを使用するProviderの例
+interface DataSourceProviderConstructor {
+  new (config: any, tempFileManager: TempFileManager): DataSourceProvider;
 }
 
 interface KnowledgeProvider {
@@ -309,9 +333,15 @@ export class NotionProvider implements DataSourceProvider {
   private client: Client;
   private databaseId: string;
 
+  constructor(
+    config: NotionConfig,
+    private tempFileManager: TempFileManager,
+  ) {
+    this.databaseId = config.database_id;
+  }
+
   async initialize(config: NotionConfig): Promise<void> {
     this.client = new Client({ auth: process.env.NOTION_API_KEY });
-    this.databaseId = config.database_id;
   }
 
   async *fetchDocumentsMetadata(): AsyncIterator<DocumentMetadata> {
@@ -322,28 +352,34 @@ export class NotionProvider implements DataSourceProvider {
 
     for (const page of pages.results) {
       yield {
-        id: `notion:${page.id}`, // 標準化されたID形式
-        sourceId: page.id, // Notion固有のページID
         providerId: "notion", // Data Source Provider ID
+        sourceId: page.id, // Notion固有のページID
         title: this.extractTitle(page),
         lastModified: new Date(page.last_edited_time),
+        fileExtension: "md", // Notion content will be converted to Markdown
       };
     }
   }
 
-  async downloadDocumentContent(pageId: string): Promise<string> {
-    // ページ本体を取得してMarkdownに変換（この処理はメモリ上で実行）
+  async downloadDocumentContent(documentId: string): Promise<string> {
+    // documentId format: "notion:page_id"
+    const pageId = documentId.replace(`${this.providerId}:`, "");
+
+    // ページ本体を取得してMarkdownに変換
     const page = await this.client.pages.retrieve({ page_id: pageId });
     const markdown = await this.pageToMarkdown(page);
 
-    // 変換結果を一時ファイルに保存
-    const tempPath = path.join(
-      os.tmpdir(),
-      `notion_${pageId}_${Date.now()}.md`,
-    );
-    await fs.writeFile(tempPath, markdown);
+    // メタデータを再構築（実際の実装では適切に取得）
+    const metadata: DocumentMetadata = {
+      providerId: this.providerId,
+      sourceId: pageId,
+      title: "Document", // 実際には適切に取得
+      lastModified: new Date(),
+      fileExtension: "md",
+    };
 
-    return tempPath; // ファイルパスを返す
+    // TempFileManagerを使用して一時ファイルを作成
+    return this.tempFileManager.createTempFile(metadata, markdown);
   }
 }
 ```
@@ -510,7 +546,143 @@ export function createSyncPlan(
 }
 ```
 
-### 6.4 Engine
+### 6.4 TempFileManager
+
+```typescript
+export class TempFileManagerImpl implements TempFileManager {
+  private tempDir: string;
+  private createdFiles: Set<string> = new Set();
+
+  constructor() {
+    // 一時ディレクトリを作成
+    this.tempDir = mkdtempSync(join(tmpdir(), "dok-"));
+  }
+
+  async createTempFile(
+    metadata: DocumentMetadata,
+    content: string | Buffer,
+    extension?: string,
+  ): Promise<string> {
+    // DocumentIDからSHA256ハッシュを生成（ファイルパスに使える安全な文字列）
+    const documentId = getDocumentId(metadata);
+    const hash = createHash("sha256").update(documentId).digest("hex");
+
+    // 拡張子の決定（優先順位: 引数 > metadata > デフォルト）
+    const fileExtension = extension || metadata.fileExtension || "tmp";
+
+    const fileName = `${hash}.${fileExtension}`;
+    const filePath = join(this.tempDir, fileName);
+
+    await writeFile(filePath, content);
+    this.createdFiles.add(filePath);
+
+    return filePath;
+  }
+
+  async cleanup(): Promise<void> {
+    // 全ての一時ファイルとディレクトリを削除
+    await rm(this.tempDir, { recursive: true, force: true });
+    this.createdFiles.clear();
+  }
+}
+
+// Reconciler内での使用例
+export class Reconciler {
+  constructor(
+    private sourceProviders: Map<string, DataSourceProvider>,
+    private targetProvider: KnowledgeProvider,
+    private options: ReconcilerOptions = {},
+  ) {
+    // Providerはすでに構築時にTempFileManagerが注入されている
+  }
+
+  async execute(plan: SyncPlan): Promise<void> {
+    // TempFileManagerは各Providerに既に注入されているため、
+    // Reconcilerは通常通り処理を実行するだけ
+
+    for (const operation of plan.operations) {
+      // ...
+      const provider = this.sourceProviders.get(
+        operation.documentMetadata.providerId,
+      );
+      const tempFilePath = await provider.downloadDocumentContent(documentId);
+      // ...
+    }
+  }
+}
+
+// Engine内でのProvider作成例
+export class Engine {
+  private createProvider(
+    config: SourceConfig,
+    tempFileManager: TempFileManager,
+  ): DataSourceProvider {
+    switch (config.provider) {
+      case "NotionProvider":
+        return new NotionProvider(config.config, tempFileManager);
+      // 他のProviderも同様
+    }
+  }
+}
+```
+
+### 6.5 TempFileManager のライフサイクル管理
+
+```typescript
+// Reconciler がTempFileManagerのライフサイクルを管理
+export class Reconciler {
+  async execute(plan: SyncPlan): Promise<void> {
+    const tempFileManager = new TempFileManagerImpl();
+
+    try {
+      // 一時的にProviderを作成（TempFileManagerを注入）
+      const providersWithTempFile = new Map<string, DataSourceProvider>();
+
+      for (const [id, providerConfig] of this.sourceProviderConfigs) {
+        const provider = this.createProvider(providerConfig, tempFileManager);
+        await provider.initialize(providerConfig.config);
+        providersWithTempFile.set(id, provider);
+      }
+
+      // 同期処理を実行
+      for (const operation of plan.operations) {
+        const provider = providersWithTempFile.get(
+          operation.documentMetadata.providerId,
+        );
+        if (!provider) continue;
+
+        switch (operation.type) {
+          case "create":
+          case "update":
+            const tempFilePath = await provider.downloadDocumentContent(
+              getDocumentId(operation.documentMetadata),
+            );
+            // targetProviderで処理
+            break;
+        }
+      }
+    } finally {
+      // 処理完了後、必ず一時ファイルをクリーンアップ
+      await tempFileManager.cleanup();
+    }
+  }
+
+  private createProvider(
+    config: SourceConfig,
+    tempFileManager: TempFileManager,
+  ): DataSourceProvider {
+    // Provider のインスタンス化
+    switch (config.provider) {
+      case "NotionProvider":
+        return new NotionProvider(config.config, tempFileManager);
+      default:
+        throw new Error(`Unknown provider: ${config.provider}`);
+    }
+  }
+}
+```
+
+### 6.6 Engine
 
 ```typescript
 export class Engine {
@@ -575,7 +747,7 @@ export class Engine {
           dryRun: this.options?.dryRun,
         },
       );
-      await reconciler.execute(plan);
+      await reconciler.execute(plan); // ReconcilerがTempFileManagerのライフサイクルを管理
     }
 
     this.logger.info("Sync job completed", { jobName: this.jobName });
