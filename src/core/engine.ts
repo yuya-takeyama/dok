@@ -8,7 +8,7 @@ export interface EngineOptions extends ReconcilerOptions {
   jobName?: string;
 }
 
-export class ETLEngine {
+export class Engine {
   private fetcher: Fetcher;
   private sourceProviderMap: Map<string, DataSourceProvider>;
   private readonly logger: Logger;
@@ -31,7 +31,7 @@ export class ETLEngine {
   }
 
   async run(): Promise<void> {
-    this.logger.info("Starting ETL job", { jobName: this.jobName });
+    this.logger.info("Starting sync job", { jobName: this.jobName });
 
     // Step 1: Fetch metadata from sources (desired state)
     this.logger.info("Fetching metadata from sources");
@@ -68,6 +68,6 @@ export class ETLEngine {
       await reconciler.execute(plan);
     }
 
-    this.logger.info("ETL job completed", { jobName: this.jobName });
+    this.logger.info("Sync job completed", { jobName: this.jobName });
   }
 }

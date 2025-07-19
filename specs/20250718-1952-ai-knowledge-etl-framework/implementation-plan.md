@@ -118,7 +118,7 @@
    - 一時ファイル管理
    - エラーハンドリングとクリーンアップ
 
-4. **ETL Engine** (`src/core/engine.ts`)
+4. **Engine** (`src/core/engine.ts`)
    - 全体の実行フロー制御
    - ジョブ管理
    - ドライランモード対応
@@ -262,7 +262,7 @@
 - ✅ Fetcher Layer: メタデータ取得の抽象化
 - ✅ Planner Layer: 純粋関数による同期計画生成
 - ✅ Reconciler Layer: SyncPlanに基づく実行とクリーンアップ
-- ✅ ETL Engine: 全体のフロー制御
+- ✅ Engine: 全体のフロー制御
 
 ### テスト
 

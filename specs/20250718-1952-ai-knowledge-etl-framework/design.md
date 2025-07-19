@@ -506,7 +506,7 @@ export function createSyncPlan(
 ### 6.4 ETL Engine
 
 ```typescript
-class ETLEngine {
+class Engine {
   constructor(private options?: { dryRun?: boolean }) {}
 
   async execute(config: Config, jobIds?: string[]): Promise<void> {
