@@ -189,12 +189,11 @@
    jobs:
      notion-to-dify:
        sources:
-         - provider: NotionProvider
-           providerId: notion
+         - provider: notion
            config:
              database_id: ${NOTION_DATABASE_ID}
        targets:
-         - provider: DifyProvider
+         - provider: dify
            config:
              dataset_id: ${DIFY_DATASET_ID}
    ```

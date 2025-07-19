@@ -3,7 +3,6 @@ import { z } from "zod";
 // Provider configuration schemas
 export const ProviderConfigSchema = z.object({
   provider: z.string(),
-  providerId: z.string().optional(),
   config: z.record(z.string(), z.any()),
 });
 
