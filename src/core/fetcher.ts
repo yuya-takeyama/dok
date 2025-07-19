@@ -7,24 +7,18 @@ export class Fetcher {
   ) {}
 
   async fetchSourceMetadata(): Promise<DocumentMetadata[]> {
-    const allMetadata: DocumentMetadata[] = [];
-
-    for (const provider of this.sourceProviders) {
-      const metadata = await provider.fetchDocumentsMetadata();
-      allMetadata.push(...metadata);
-    }
-
-    return allMetadata;
+    const metadataPromises = this.sourceProviders.map((provider) =>
+      provider.fetchDocumentsMetadata(),
+    );
+    const metadataArrays = await Promise.all(metadataPromises);
+    return metadataArrays.flat();
   }
 
   async fetchTargetMetadata(): Promise<DocumentMetadata[]> {
-    const allMetadata: DocumentMetadata[] = [];
-
-    for (const provider of this.targetProviders) {
-      const metadata = await provider.fetchDocumentsMetadata();
-      allMetadata.push(...metadata);
-    }
-
-    return allMetadata;
+    const metadataPromises = this.targetProviders.map((provider) =>
+      provider.fetchDocumentsMetadata(),
+    );
+    const metadataArrays = await Promise.all(metadataPromises);
+    return metadataArrays.flat();
   }
 }
