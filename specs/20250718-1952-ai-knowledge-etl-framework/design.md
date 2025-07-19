@@ -259,7 +259,6 @@ interface Config {
 
   // グローバルオプション
   options?: {
-    dryRun?: boolean;
     logLevel?: "debug" | "info" | "warn" | "error";
   };
 }
@@ -503,6 +502,8 @@ export function generateSyncPlan(
 
 ```typescript
 class ETLEngine {
+  constructor(private options?: { dryRun?: boolean }) {}
+
   async execute(config: Config, jobIds?: string[]): Promise<void> {
     // 実行するジョブを決定
     const jobsToRun = this.selectJobs(config.syncJobs, jobIds);
@@ -557,8 +558,8 @@ class ETLEngine {
       const syncPlan = generateSyncPlan(allSourceMetadata, targetMetadata);
       logger.info(`Sync plan for target:`, syncPlan.summary);
 
-      // ドライランモードのチェック
-      if (globalConfig.options?.dryRun) {
+      // ドライランモードのチェック（CLIから渡される）
+      if (this.options?.dryRun) {
         logger.info("Dry run mode - no changes will be made");
         this.printPlan(syncPlan);
         continue;
@@ -724,7 +725,6 @@ syncJobs:
           dataset_id: ${DIFY_DATASET_ID}
 
 options:
-  dryRun: false
   logLevel: info
 ```
 
@@ -800,7 +800,6 @@ syncJobs:
       enabled: false # テスト時のみ有効化
 
 options:
-  dryRun: false
   logLevel: info
 ```
 
