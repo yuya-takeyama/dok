@@ -14,6 +14,7 @@ interface DifyDocument {
   name: string;
   created_at: number; // Unix timestamp in seconds
   updated_at: number; // Unix timestamp in seconds
+  metadata?: Record<string, unknown>;
 }
 
 interface DifyDocumentsResponse {
@@ -24,11 +25,39 @@ interface DifyDocumentsResponse {
   total: number;
 }
 
+interface MetadataField {
+  id: string;
+  name: string;
+  type: "string" | "number" | "time";
+}
+
+interface DifyDocumentDetail {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+  doc_metadata: Array<{
+    id: string;
+    name: string;
+    type: "string" | "number" | "time";
+    value: string;
+  }>;
+}
+
+interface CreateDocumentResponse {
+  document: {
+    id: string;
+    name: string;
+    created_at: number;
+  };
+}
+
 export class DifyProvider implements KnowledgeProvider {
   private baseUrl: string;
   private apiKey: string;
   private datasetId: string;
   private providerId = "dify";
+  private metadataFieldIds: Map<string, string> = new Map();
 
   constructor(config: DifyProviderConfig) {
     this.baseUrl = config.api_url;
@@ -58,6 +87,102 @@ export class DifyProvider implements KnowledgeProvider {
     return response;
   }
 
+  private async getMetadataFieldIds(): Promise<void> {
+    if (this.metadataFieldIds.size > 0) {
+      return; // Already cached
+    }
+
+    try {
+      const response = await this.fetchApi(`datasets/${this.datasetId}/metadata`, {
+        method: "GET",
+      });
+
+      const data = (await response.json()) as {
+        doc_metadata?: MetadataField[];
+        data?: MetadataField[];
+      };
+      const fields: MetadataField[] = data.doc_metadata || data.data || [];
+
+      for (const field of fields) {
+        this.metadataFieldIds.set(field.name, field.id);
+      }
+
+      console.log(`Loaded ${this.metadataFieldIds.size} metadata field IDs`);
+    } catch (error) {
+      console.error("Failed to load metadata field IDs:", error);
+    }
+  }
+
+  private async fetchDocumentDetail(documentId: string): Promise<DifyDocumentDetail> {
+    const response = await this.fetchApi(`datasets/${this.datasetId}/documents/${documentId}`, {
+      method: "GET",
+    });
+    return (await response.json()) as DifyDocumentDetail;
+  }
+
+  private async setDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
+    await this.getMetadataFieldIds(); // Ensure field IDs are loaded
+
+    const metadataList: Array<{ id: string; name: string; value: string }> = [];
+
+    // Add source_id
+    const sourceIdFieldId = this.metadataFieldIds.get("source_id");
+    if (sourceIdFieldId) {
+      metadataList.push({
+        id: sourceIdFieldId,
+        name: "source_id",
+        value: metadata.sourceId,
+      });
+    }
+
+    // Add provider_id
+    const providerIdFieldId = this.metadataFieldIds.get("provider_id");
+    if (providerIdFieldId) {
+      metadataList.push({
+        id: providerIdFieldId,
+        name: "provider_id",
+        value: metadata.providerId,
+      });
+    }
+
+    // Add last_updated
+    const lastUpdatedFieldId = this.metadataFieldIds.get("last_updated");
+    if (lastUpdatedFieldId) {
+      metadataList.push({
+        id: lastUpdatedFieldId,
+        name: "last_updated",
+        value: metadata.lastModified.toISOString(),
+      });
+    }
+
+    if (metadataList.length === 0) {
+      console.warn("No metadata fields found, skipping metadata assignment");
+      return;
+    }
+
+    try {
+      await this.fetchApi(`datasets/${this.datasetId}/documents/metadata`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          operation_data: [
+            {
+              document_id: documentId,
+              metadata_list: metadataList,
+            },
+          ],
+        }),
+      });
+
+      console.log(`Set metadata for document ${documentId}`);
+    } catch (error) {
+      console.error(`Failed to set metadata for document ${documentId}:`, error);
+      // Don't throw - metadata is optional enhancement
+    }
+  }
+
   async fetchDocumentsMetadata(): Promise<DocumentMetadata[]> {
     const documents: DifyDocument[] = [];
     let page = 1;
@@ -80,6 +205,9 @@ export class DifyProvider implements KnowledgeProvider {
         const response = await this.fetchApi(path, {
           method: "GET",
         });
+
+        // Also fetch metadata for each document (if API supports batch metadata fetching)
+        // For now, we'll need to fetch metadata individually for each document
 
         const contentType = response.headers.get("content-type");
         const responseText = await response.text();
@@ -111,22 +239,43 @@ export class DifyProvider implements KnowledgeProvider {
       }
     }
 
-    return documents.map((doc) => {
-      // Extract sourceId from document ID
-      // We expect Dify documents to have IDs in format: "provider:sourceId"
-      let sourceId = doc.id;
+    // Fetch detailed metadata for each document using Document Detail API
+    // Process in batches to avoid rate limits
+    const batchSize = 10;
+    const documentsWithMetadata: DifyDocumentDetail[] = [];
 
-      // If the document ID already contains our provider prefix, extract the actual sourceId
-      if (doc.id.startsWith(`${this.providerId}:`)) {
-        const parsed = parseDocumentId(doc.id);
-        sourceId = parsed.sourceId;
+    for (let i = 0; i < documents.length; i += batchSize) {
+      const batch = documents.slice(i, i + batchSize);
+      const detailRequests = batch.map((doc) => this.fetchDocumentDetail(doc.id));
+      const batchResults = await Promise.all(detailRequests);
+      documentsWithMetadata.push(...batchResults);
+
+      // Optional: Add a small delay between batches to be respectful to the API
+      if (i + batchSize < documents.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
+    }
+
+    // Convert doc_metadata to DocumentMetadata format
+    return documentsWithMetadata.map((doc) => {
+      const getMetadataValue = (name: string): string | undefined => {
+        return doc.doc_metadata?.find((m) => m.name === name)?.value;
+      };
+
+      const providerId = getMetadataValue("provider_id") || this.providerId;
+      const sourceId = getMetadataValue("source_id") || doc.id;
+      const lastUpdatedStr = getMetadataValue("last_updated");
+
+      // Use metadata last_updated if available, otherwise fall back to doc.updated_at
+      const lastModified = lastUpdatedStr
+        ? new Date(lastUpdatedStr)
+        : new Date(doc.updated_at * 1000);
 
       return {
-        providerId: this.providerId,
+        providerId,
         sourceId,
         title: doc.name,
-        lastModified: new Date(doc.updated_at * 1000), // Convert Unix timestamp to Date
+        lastModified,
       };
     });
   }
@@ -153,11 +302,16 @@ export class DifyProvider implements KnowledgeProvider {
     formData.append("data", JSON.stringify(dataObj));
 
     try {
-      await this.fetchApi(`datasets/${this.datasetId}/document/create_by_file`, {
+      const response = await this.fetchApi(`datasets/${this.datasetId}/document/create_by_file`, {
         method: "POST",
         body: formData,
       });
-      console.log(`Created document: ${metadata.title}`);
+
+      const result = (await response.json()) as CreateDocumentResponse;
+      console.log(`Created document: ${metadata.title} with ID: ${result.document.id}`);
+
+      // Set metadata after document creation
+      await this.setDocumentMetadata(result.document.id, metadata);
     } catch (error) {
       console.error(`Failed to create document: ${error}`);
       throw new Error(`Failed to create document: ${error}`);
@@ -194,6 +348,9 @@ export class DifyProvider implements KnowledgeProvider {
         body: formData,
       });
       console.log(`Updated document: ${metadata.title}`);
+
+      // Update metadata after document update
+      await this.setDocumentMetadata(difyDocumentId, metadata);
     } catch (error) {
       console.error(`Failed to update document: ${error}`);
       throw new Error(`Failed to update document: ${error}`);
@@ -238,7 +395,8 @@ export class DifyProvider implements KnowledgeProvider {
   }
 
   private async findDifyDocumentIdBySourceId(sourceId: string): Promise<string | null> {
-    // Fetch all documents and find the one matching our sourceId
+    // Get all documents list first
+    const documents: DifyDocument[] = [];
     let page = 1;
     let hasMore = true;
 
@@ -254,19 +412,40 @@ export class DifyProvider implements KnowledgeProvider {
         });
 
         const data = (await response.json()) as DifyDocumentsResponse;
-
-        // Look for document with matching sourceId in name or ID
-        for (const doc of data.data) {
-          if (doc.id === sourceId || doc.id === `${this.providerId}:${sourceId}`) {
-            return doc.id;
-          }
-        }
-
+        documents.push(...data.data);
         hasMore = data.has_more;
         page++;
       } catch (error) {
-        console.error(`Failed to search for document: ${error}`);
+        console.error(`Failed to fetch documents: ${error}`);
         return null;
+      }
+    }
+
+    // Check each document's metadata using Document Detail API (in batches)
+    const batchSize = 10;
+
+    for (let i = 0; i < documents.length; i += batchSize) {
+      const batch = documents.slice(i, i + batchSize);
+      const detailRequests = batch.map((doc) => this.fetchDocumentDetail(doc.id));
+
+      try {
+        const batchResults = await Promise.all(detailRequests);
+
+        for (const docDetail of batchResults) {
+          const docSourceId = docDetail.doc_metadata?.find((m) => m.name === "source_id")?.value;
+          if (docSourceId === sourceId) {
+            return docDetail.id;
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to fetch document details for batch: ${error}`);
+        // Continue with next batch instead of failing completely
+        continue;
+      }
+
+      // Add delay between batches
+      if (i + batchSize < documents.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
