@@ -37,7 +37,10 @@ export class DifyProvider implements KnowledgeProvider {
   }
 
   private async fetchApi(path: string, options: RequestInit = {}): Promise<Response> {
-    const url = new URL(path, this.baseUrl);
+    // Ensure proper URL concatenation - remove leading slash from path if baseUrl ends with slash
+    const cleanPath = path.startsWith("/") ? path.substring(1) : path;
+    const cleanBaseUrl = this.baseUrl.endsWith("/") ? this.baseUrl : `${this.baseUrl}/`;
+    const url = new URL(cleanPath, cleanBaseUrl);
 
     const headers = new Headers(options.headers);
     headers.set("Authorization", `Bearer ${this.apiKey}`);
@@ -67,18 +70,44 @@ export class DifyProvider implements KnowledgeProvider {
           limit: "100",
         });
 
-        const response = await this.fetchApi(`/datasets/${this.datasetId}/documents?${params}`, {
+        const path = `datasets/${this.datasetId}/documents?${params}`;
+        const fullUrl = new URL(
+          path,
+          this.baseUrl.endsWith("/") ? this.baseUrl : `${this.baseUrl}/`,
+        ).toString();
+        console.log(`Fetching documents from Dify: ${fullUrl}`);
+
+        const response = await this.fetchApi(path, {
           method: "GET",
         });
 
-        const data = (await response.json()) as DifyDocumentsResponse;
+        const contentType = response.headers.get("content-type");
+        const responseText = await response.text();
+
+        if (!contentType?.includes("application/json")) {
+          console.error(
+            `Expected JSON but got ${contentType}. Response preview: ${responseText.substring(0, 200)}`,
+          );
+          throw new Error(
+            `Dify API returned non-JSON response. Content-Type: ${contentType}. This usually means the API URL is incorrect or authentication failed.`,
+          );
+        }
+
+        let data: DifyDocumentsResponse;
+        try {
+          data = JSON.parse(responseText) as DifyDocumentsResponse;
+        } catch (parseError) {
+          console.error(`Failed to parse JSON response: ${parseError}`);
+          console.error(`Response text: ${responseText.substring(0, 500)}`);
+          throw new Error(`Failed to parse Dify API response as JSON`);
+        }
 
         documents.push(...data.data);
         hasMore = data.has_more;
         page++;
       } catch (error) {
         console.error(`Failed to fetch documents from Dify: ${error}`);
-        throw new Error(`Failed to fetch documents from Dify: ${error}`);
+        throw error;
       }
     }
 
@@ -111,15 +140,20 @@ export class DifyProvider implements KnowledgeProvider {
     const formData = new FormData();
     const fileBlob = new Blob([fileContent], { type: "application/octet-stream" });
     formData.append("file", fileBlob, fileName);
-    formData.append("name", metadata.title);
-    formData.append("indexing_technique", "high_quality");
 
-    // Store the original sourceId in the document to maintain traceability
-    const documentId = `${metadata.providerId}:${metadata.sourceId}`;
-    formData.append("original_document_id", documentId);
+    // Create data object according to API documentation
+    const dataObj = {
+      indexing_technique: "high_quality",
+      process_rule: {
+        mode: "automatic",
+      },
+    };
+
+    // Append data as JSON string
+    formData.append("data", JSON.stringify(dataObj));
 
     try {
-      await this.fetchApi(`/datasets/${this.datasetId}/documents/create_by_file`, {
+      await this.fetchApi(`datasets/${this.datasetId}/document/create_by_file`, {
         method: "POST",
         body: formData,
       });
@@ -148,14 +182,17 @@ export class DifyProvider implements KnowledgeProvider {
     formData.append("file", fileBlob, fileName);
     formData.append("name", metadata.title);
 
+    // For update API, process_rule is sent separately as JSON
+    const processRule = {
+      mode: "automatic",
+    };
+    formData.append("process_rule", JSON.stringify(processRule));
+
     try {
-      await this.fetchApi(
-        `/datasets/${this.datasetId}/documents/${difyDocumentId}/update_by_file`,
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
+      await this.fetchApi(`datasets/${this.datasetId}/documents/${difyDocumentId}/update-by-file`, {
+        method: "POST",
+        body: formData,
+      });
       console.log(`Updated document: ${metadata.title}`);
     } catch (error) {
       console.error(`Failed to update document: ${error}`);
@@ -175,7 +212,7 @@ export class DifyProvider implements KnowledgeProvider {
     }
 
     try {
-      await this.fetchApi(`/datasets/${this.datasetId}/documents/${difyDocumentId}`, {
+      await this.fetchApi(`datasets/${this.datasetId}/documents/${difyDocumentId}`, {
         method: "DELETE",
       });
       console.log(`Deleted document: ${documentId}`);
@@ -212,7 +249,7 @@ export class DifyProvider implements KnowledgeProvider {
           limit: "100",
         });
 
-        const response = await this.fetchApi(`/datasets/${this.datasetId}/documents?${params}`, {
+        const response = await this.fetchApi(`datasets/${this.datasetId}/documents?${params}`, {
           method: "GET",
         });
 
