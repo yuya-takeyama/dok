@@ -99,7 +99,7 @@ export class DifyProvider implements KnowledgeProvider {
         } catch (parseError) {
           console.error(`Failed to parse JSON response: ${parseError}`);
           console.error(`Response text: ${responseText.substring(0, 500)}`);
-          throw new Error(`Failed to parse Dify API response as JSON`);
+          throw new Error("Failed to parse Dify API response as JSON");
         }
 
         documents.push(...data.data);
