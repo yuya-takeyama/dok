@@ -4,6 +4,7 @@ import {
   type DataSourceProvider,
   getDocumentId,
   type KnowledgeProvider,
+  type SyncOperation,
   type SyncPlan,
 } from "./types";
 
@@ -60,65 +61,55 @@ export class Reconciler {
         sourceProviders.set(providerId, provider);
       }
 
-      for (const operation of plan.operations) {
-        const { type, documentMetadata, reason } = operation;
+      // Group operations by type for parallel processing
+      const createOps = plan.operations.filter((op) => op.type === "create");
+      const updateOps = plan.operations.filter((op) => op.type === "update");
+      const deleteOps = plan.operations.filter((op) => op.type === "delete");
+      const skipOps = plan.operations.filter((op) => op.type === "skip");
 
-        this.logger.info(`Processing operation: ${type}`, {
-          documentId: getDocumentId(documentMetadata),
-          title: documentMetadata.title,
-          reason,
+      this.logger.info("Operation grouping completed", {
+        creates: createOps.length,
+        updates: updateOps.length,
+        deletes: deleteOps.length,
+        skips: skipOps.length,
+      });
+
+      // Process skip operations (nothing to do)
+      for (const operation of skipOps) {
+        this.logger.info("Processing operation: skip", {
+          documentId: getDocumentId(operation.documentMetadata),
+          title: operation.documentMetadata.title,
+          reason: operation.reason,
         });
+      }
 
-        if (this.dryRun) {
-          this.logger.info("Dry run - skipping actual operation");
-          continue;
-        }
+      // Process create operations in parallel batches
+      if (createOps.length > 0) {
+        this.logger.info(`Processing ${createOps.length} create operations in parallel`);
+        const createErrors = await this.processOperationsBatch(
+          createOps,
+          "create",
+          sourceProviders,
+        );
+        errors.push(...createErrors);
+      }
 
-        try {
-          switch (type) {
-            case "create":
-            case "update": {
-              // Get source provider and download content
-              const sourceProvider = sourceProviders.get(documentMetadata.providerId);
-              if (!sourceProvider) {
-                throw new Error(`Source provider not found: ${documentMetadata.providerId}`);
-              }
+      // Process update operations in parallel batches
+      if (updateOps.length > 0) {
+        this.logger.info(`Processing ${updateOps.length} update operations in parallel`);
+        const updateErrors = await this.processOperationsBatch(
+          updateOps,
+          "update",
+          sourceProviders,
+        );
+        errors.push(...updateErrors);
+      }
 
-              // Provider returns temp file path directly
-              const tempFilePath = await sourceProvider.downloadDocumentContent(
-                getDocumentId(documentMetadata),
-              );
-
-              // Create or update in target
-              if (type === "create") {
-                await this.targetProvider.createDocumentFromFile(documentMetadata, tempFilePath);
-              } else {
-                await this.targetProvider.updateDocumentFromFile(documentMetadata, tempFilePath);
-              }
-              break;
-            }
-
-            case "delete": {
-              // Delete from target
-              await this.targetProvider.deleteDocument(getDocumentId(documentMetadata));
-              break;
-            }
-
-            case "skip": {
-              // Nothing to do
-              break;
-            }
-          }
-        } catch (error) {
-          // Collect error but continue processing other operations
-          const err = error instanceof Error ? error : new Error(String(error));
-          errors.push({ operation, error: err });
-
-          this.logger.error(`Failed to process operation: ${type}`, {
-            documentId: getDocumentId(documentMetadata),
-            error: err.message,
-          });
-        }
+      // Process delete operations in parallel batches
+      if (deleteOps.length > 0) {
+        this.logger.info(`Processing ${deleteOps.length} delete operations in parallel`);
+        const deleteErrors = await this.processOperationsBatch(deleteOps, "delete");
+        errors.push(...deleteErrors);
       }
 
       // Report results
@@ -148,6 +139,110 @@ export class Reconciler {
     } finally {
       // Clean up all temporary files
       await tempFileManager.cleanup();
+    }
+  }
+
+  private async processOperationsBatch(
+    operations: SyncOperation[],
+    operationType: "create" | "update" | "delete",
+    sourceProviders?: Map<string, DataSourceProvider>,
+  ): Promise<Array<{ operation: SyncOperation; error: Error }>> {
+    const errors: Array<{ operation: SyncOperation; error: Error }> = [];
+    const batchSize = 5; // Fixed batch size for parallel processing
+
+    // Process operations in batches
+    for (let i = 0; i < operations.length; i += batchSize) {
+      const batch = operations.slice(i, i + batchSize);
+
+      this.logger.info(
+        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(operations.length / batchSize)} for ${operationType}`,
+        {
+          batchSize: batch.length,
+          startIndex: i,
+        },
+      );
+
+      // Process current batch in parallel
+      const batchPromises = batch.map((operation) =>
+        this.processOperation(operation, operationType, sourceProviders),
+      );
+
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      // Collect errors from batch
+      for (let j = 0; j < batchResults.length; j++) {
+        const result = batchResults[j];
+        if (result.status === "rejected") {
+          const error =
+            result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+          errors.push({ operation: batch[j], error });
+
+          this.logger.error(`Failed to process operation: ${operationType}`, {
+            documentId: getDocumentId(batch[j].documentMetadata),
+            error: error.message,
+          });
+        }
+      }
+
+      // Add small delay between batches to be respectful to the API
+      if (i + batchSize < operations.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+
+    return errors;
+  }
+
+  private async processOperation(
+    operation: SyncOperation,
+    operationType: "create" | "update" | "delete",
+    sourceProviders?: Map<string, DataSourceProvider>,
+  ): Promise<void> {
+    const { documentMetadata, reason } = operation;
+
+    this.logger.info(`Processing operation: ${operationType}`, {
+      documentId: getDocumentId(documentMetadata),
+      title: documentMetadata.title,
+      reason,
+    });
+
+    if (this.dryRun) {
+      this.logger.info("Dry run - skipping actual operation");
+      return;
+    }
+
+    switch (operationType) {
+      case "create":
+      case "update": {
+        if (!sourceProviders) {
+          throw new Error("Source providers required for create/update operations");
+        }
+
+        // Get source provider and download content
+        const sourceProvider = sourceProviders.get(documentMetadata.providerId);
+        if (!sourceProvider) {
+          throw new Error(`Source provider not found: ${documentMetadata.providerId}`);
+        }
+
+        // Provider returns temp file path directly
+        const tempFilePath = await sourceProvider.downloadDocumentContent(
+          getDocumentId(documentMetadata),
+        );
+
+        // Create or update in target
+        if (operationType === "create") {
+          await this.targetProvider.createDocumentFromFile(documentMetadata, tempFilePath);
+        } else {
+          await this.targetProvider.updateDocumentFromFile(documentMetadata, tempFilePath);
+        }
+        break;
+      }
+
+      case "delete": {
+        // Delete from target
+        await this.targetProvider.deleteDocument(getDocumentId(documentMetadata));
+        break;
+      }
     }
   }
 }

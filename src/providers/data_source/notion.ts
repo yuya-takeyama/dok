@@ -38,6 +38,7 @@ export class NotionProvider implements DataSourceProvider {
       const response = await this.client.databases.query({
         database_id: this.databaseId,
         start_cursor: startCursor,
+        page_size: 100, // Explicitly set page size to maximum
       });
 
       for (const page of response.results) {
