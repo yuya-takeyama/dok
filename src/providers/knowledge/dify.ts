@@ -145,13 +145,13 @@ export class DifyProvider implements KnowledgeProvider {
       });
     }
 
-    // Add last_updated
+    // Add last_updated (as Unix timestamp in seconds)
     const lastUpdatedFieldId = this.metadataFieldIds.get("last_updated");
     if (lastUpdatedFieldId) {
       metadataList.push({
         id: lastUpdatedFieldId,
         name: "last_updated",
-        value: metadata.lastModified.toISOString(),
+        value: Math.floor(metadata.lastModified.getTime() / 1000).toString(),
       });
     }
 
@@ -268,7 +268,7 @@ export class DifyProvider implements KnowledgeProvider {
 
       // Use metadata last_updated if available, otherwise fall back to doc.updated_at
       const lastModified = lastUpdatedStr
-        ? new Date(lastUpdatedStr)
+        ? new Date(Number(lastUpdatedStr) * 1000) // Unix timestamp (seconds) -> Date
         : new Date(doc.updated_at * 1000);
 
       return {
