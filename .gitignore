@@ -2,6 +2,10 @@
 **/settings.local.json
 CLAUDE.local.md
 
+# Personal config files
+config/*
+!config/example.yaml
+
 # Logs
 logs
 *.log
