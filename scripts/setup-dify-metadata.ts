@@ -112,17 +112,17 @@ async function main() {
     console.log(`📊 Found ${existingFields.length} existing metadata fields`);
 
     // Check if our required fields already exist
-    const sourceIdField = existingFields.find((f) => f.name === "source_id");
-    const lastUpdatedField = existingFields.find((f) => f.name === "last_updated");
-    const providerIdField = existingFields.find((f) => f.name === "provider_id");
+    const sourceIdField = existingFields.find((f) => f.name === "dok.data_source_id");
+    const lastUpdatedField = existingFields.find((f) => f.name === "dok.data_source_last_modified");
+    const providerIdField = existingFields.find((f) => f.name === "dok.data_source_provider_id");
 
     console.log("─".repeat(60));
 
     // Create missing fields
     const fieldsToCreate: Array<{ name: string; type: "string" | "number" | "time"; exists: boolean }> = [
-      { name: "source_id", type: "string", exists: !!sourceIdField },
-      { name: "provider_id", type: "string", exists: !!providerIdField },
-      { name: "last_updated", type: "time", exists: !!lastUpdatedField },
+      { name: "dok.data_source_id", type: "string", exists: !!sourceIdField },
+      { name: "dok.data_source_provider_id", type: "string", exists: !!providerIdField },
+      { name: "dok.data_source_last_modified", type: "time", exists: !!lastUpdatedField },
     ];
 
     for (const field of fieldsToCreate) {

@@ -125,32 +125,32 @@ export class DifyProvider implements KnowledgeProvider {
 
     const metadataList: Array<{ id: string; name: string; value: string }> = [];
 
-    // Add source_id
-    const sourceIdFieldId = this.metadataFieldIds.get("source_id");
+    // Add dok.data_source_id
+    const sourceIdFieldId = this.metadataFieldIds.get("dok.data_source_id");
     if (sourceIdFieldId) {
       metadataList.push({
         id: sourceIdFieldId,
-        name: "source_id",
+        name: "dok.data_source_id",
         value: metadata.sourceId,
       });
     }
 
-    // Add provider_id
-    const providerIdFieldId = this.metadataFieldIds.get("provider_id");
+    // Add dok.data_source_provider_id
+    const providerIdFieldId = this.metadataFieldIds.get("dok.data_source_provider_id");
     if (providerIdFieldId) {
       metadataList.push({
         id: providerIdFieldId,
-        name: "provider_id",
+        name: "dok.data_source_provider_id",
         value: metadata.providerId,
       });
     }
 
-    // Add last_updated (as Unix timestamp in seconds)
-    const lastUpdatedFieldId = this.metadataFieldIds.get("last_updated");
+    // Add dok.data_source_last_modified (as Unix timestamp in seconds)
+    const lastUpdatedFieldId = this.metadataFieldIds.get("dok.data_source_last_modified");
     if (lastUpdatedFieldId) {
       metadataList.push({
         id: lastUpdatedFieldId,
-        name: "last_updated",
+        name: "dok.data_source_last_modified",
         value: Math.floor(metadata.lastModified.getTime() / 1000).toString(),
       });
     }
@@ -262,9 +262,9 @@ export class DifyProvider implements KnowledgeProvider {
         return doc.doc_metadata?.find((m) => m.name === name)?.value;
       };
 
-      const providerId = getMetadataValue("provider_id") || this.providerId;
-      const sourceId = getMetadataValue("source_id") || doc.id;
-      const lastUpdatedStr = getMetadataValue("last_updated");
+      const providerId = getMetadataValue("dok.data_source_provider_id") || this.providerId;
+      const sourceId = getMetadataValue("dok.data_source_id") || doc.id;
+      const lastUpdatedStr = getMetadataValue("dok.data_source_last_modified");
 
       // Use metadata last_updated if available, otherwise fall back to doc.updated_at
       const lastModified = lastUpdatedStr
@@ -432,7 +432,9 @@ export class DifyProvider implements KnowledgeProvider {
         const batchResults = await Promise.all(detailRequests);
 
         for (const docDetail of batchResults) {
-          const docSourceId = docDetail.doc_metadata?.find((m) => m.name === "source_id")?.value;
+          const docSourceId = docDetail.doc_metadata?.find(
+            (m) => m.name === "dok.data_source_id",
+          )?.value;
           if (docSourceId === sourceId) {
             return docDetail.id;
           }
