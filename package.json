@@ -1,9 +1,15 @@
 {
   "name": "dok",
   "version": "0.0.1",
-  "description": "",
-  "main": "index.js",
+  "description": "AI Knowledge ETL Framework",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "dok": "./dist/index.js"
+  },
   "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -28,7 +34,7 @@
   },
   "dependencies": {
     "@notionhq/client": "^4.0.1",
-    "form-data": "^4.0.4",
+    "commander": "^14.0.0",
     "notion-to-md": "^3.1.9",
     "winston": "^3.17.0",
     "yaml": "^2.8.0",

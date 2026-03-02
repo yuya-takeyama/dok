@@ -30,11 +30,19 @@ export class TempFileManagerImpl implements TempFileManager {
     extension?: string,
   ): Promise<string> {
     const documentId = getDocumentId(metadata);
-    const hash = createHash("sha256").update(documentId).digest("hex");
+    const hash = createHash("sha256").update(documentId).digest("hex").substring(0, 8);
 
     const fileExtension = extension || metadata.fileExtension || "tmp";
 
-    const fileName = `${hash}.${fileExtension}`;
+    // ファイル名に使えない文字をサニタイズ
+    const sanitizedTitle = metadata.title
+      .replace(/[/\\:*?"<>|]/g, "_") // 危険な文字をアンダースコアに置換
+      .replace(/\s+/g, " ") // 連続するスペースを1つに
+      .trim()
+      .substring(0, 200); // 長すぎるタイトルを制限
+
+    // タイトル + ハッシュでユニーク性を保証（メタデータで管理するので見た目はシンプルに）
+    const fileName = `${sanitizedTitle}_${hash}.${fileExtension}`;
     const filePath = join(this.tempDir, fileName);
 
     await writeFile(filePath, content);
