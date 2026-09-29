@@ -27,7 +27,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@notionhq/client": "^4.0.1",
+    "@notionhq/client": "^5.0.0",
     "form-data": "^4.0.4",
     "notion-to-md": "^3.1.9",
     "winston": "^3.17.0",
